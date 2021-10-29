@@ -7,6 +7,10 @@ import * as dat from 'dat.gui'
 import './App.css';
 import Scoring from "./Components/scoring"
 import { Vector3 } from 'three';
+import socketIOClient from "socket.io-client";
+import Peer from 'peerjs';
+import Axios from "axios";
+
 
 
 
@@ -14,7 +18,133 @@ function App() {
   const [energy, setEnergy] = useState(0);
 
   useEffect(() => {
-    console.log("executed");
+    const ENDPOINT = "http://localhost:4100/";
+    const videoGrid = document.getElementById("video-grid");
+    let myPeer;
+    let character
+
+    const myAudio = document.createElement("video");
+    myAudio.muted = true;
+
+    //PeerJS
+    myPeer = new Peer(undefined);
+    const peers = [];
+
+    //Socket
+    const socket = socketIOClient(ENDPOINT);
+    //FALOPEADA
+
+    navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true,
+    }).then(stream => {
+      addVideoStream(myAudio, stream);
+
+      // socket.on("user-entity", userArr => {
+      //   console.log(userArr, "userArr")
+      // })
+
+      socket.on("user-position", userArr => {
+        for (const property in userArr) {
+          let avatar = scene.getObjectByName(property);
+          if (avatar && avatar.name != myPeer.id) {
+            avatar.position.set(userArr[property].x, userArr[property].y, userArr[property].z)
+          }
+        }
+      })
+
+      socket.on("comet-position", comeTar => {
+        console.log("COMETAR", comeTar);
+      })
+
+      myPeer.on("call", call => {
+        call.answer(stream)
+        const audio = document.createElement("video");
+
+        call.on("stream", userVideoStream => {
+          addVideoStream(audio, userVideoStream);
+        })
+      })
+
+      socket.on("user-connected", userId => {
+        gltfLoader.load(
+          'comet.gltf',
+          (model) => {
+            model.scene.position.set(0, 0, 0);
+            model.scene.children[0].name = userId;
+            model.scene.scale.set(0.5, 0.5, 0.5)
+            scene.add(model.scene.children[0].clone())
+          }
+        )
+
+        connectToNewUser(userId, stream);
+      })
+
+      socket.on("comet-movement", position => {
+        console.log("position-comet", position)
+      })
+
+      socket.on("user-disconnected", userId => {
+        console.log(peers)
+        peers[userId] && peers[userId].close();
+        let target = scene.getObjectByName(userId);
+        console.log("TARGET", target);
+        scene.remove(target)
+    })
+    })
+
+    myPeer.on("open", id => {
+      socket.emit("join-room", "room1", id)
+      Axios.get('http://localhost:4100/userArr')
+        .then(function (response) {
+          console.log("xDDD", response.data)
+          
+          for (const property in response.data) {
+            gltfLoader.load(
+              'comet.gltf',
+              (model) => {
+                model.scene.position.set(0, 0, 0);
+                model.scene.children[0].name = property;
+                model.scene.scale.set(0.5, 0.5, 0.5)
+                scene.add(model.scene.children[0])
+                character = scene.getObjectByName(property);
+                console.log("character", character)
+
+                if(property == myPeer.id){
+                  controls.target = character.position;
+                  character.lookAt(camera.position)
+                }
+               
+              }
+            )
+          }
+        })
+    })
+
+    function connectToNewUser(userId, stream) {
+      const call = myPeer.call(userId, stream);
+      const audio = document.createElement("video");
+      call.on("stream", userVideoStream => {
+        addVideoStream(audio, userVideoStream)
+      })
+
+      call.on("close", () => {
+        audio.remove()
+      })
+
+      peers[userId] = call;
+    }
+
+    function addVideoStream(audio, stream) {
+      audio.srcObject = stream;
+      audio.addEventListener("loadedmetadata", () => {
+        audio.play()
+      })
+
+      videoGrid.append(audio)
+
+    }
+
     const canvas = document.querySelector('canvas.webgl');
     // const raycaster = new THREE.Raycaster()
     // Debug
@@ -59,15 +189,7 @@ function App() {
     // )
 
     const gltfLoader = new GLTFLoader()
-    gltfLoader.load(
-      'user.gltf',
-      (gltf) => {
-        console.log(gltf)
-        scene.add(gltf.scene[0])
-        gltf.scene.position.set(0, 0, 0);
 
-      }
-    )
     // environmentMapTexture.MinFilter = THREE.LinearFilter
 
 
@@ -78,7 +200,6 @@ function App() {
       width: window.innerWidth,
       height: window.innerHeight
     }
-
 
     /**
      * Renderer
@@ -115,7 +236,6 @@ function App() {
 
 
     //Music
-
     const listener = new THREE.AudioListener();
     camera.add(listener);
 
@@ -133,7 +253,7 @@ function App() {
       soundtrack.setBuffer(buffer);
       soundtrack.setLoop(true);
       soundtrack.setVolume(0.5);
-      soundtrack.play();
+      // soundtrack.play();
     });
 
     audioLoader.load('boostfx.mp3', function (buffer) {
@@ -169,22 +289,28 @@ function App() {
     // scene.add(character)
 
     //Character
-    const character = new THREE.Mesh(
-      new THREE.SphereGeometry(0.5, 16, 16),
-      new THREE.MeshBasicMaterial({ color: 'white', map: colorTexture, side: THREE.DoubleSide })
-    )
+    // const character = new THREE.Mesh(
+    //   new THREE.SphereGeometry(0.5, 16, 16),
+    //   new THREE.MeshBasicMaterial({ color: 'white', map: colorTexture, side: THREE.DoubleSide })
+    // )
+
 
     // const ref = new THREE.Mesh(
     //   new THREE.SphereGeometry(0.5, 8, 8),
     //   new THREE.MeshBasicMaterial({ color: 'red', })
     // )
 
-    scene.add(character);
 
 
     // movement - please calibrate these values
 
     var speed = 8;
+
+    //Light
+
+    const light = new THREE.AmbientLight(0xffffff, 4);
+    scene.add(light);
+
 
     document.addEventListener("keydown", onDocumentKeyDown, false);
     function onDocumentKeyDown(event) {
@@ -193,7 +319,7 @@ function App() {
         //Character position
         keys["forward"] = true
       } else if (keyCode == 16) {
-        console.log("boost");
+        // console.log("boost");
         keys["boost"] = true;
       }
     }
@@ -205,7 +331,7 @@ function App() {
         //Character position
         keys["forward"] = false
       } else if (keyCode == 16) {
-        console.log("boost");
+        // console.log("boost");
         keys["boost"] = false;
       }
     }
@@ -215,7 +341,6 @@ function App() {
     const controls = new OrbitControls(camera, canvas)
     controls.enableDamping = true;
     OrbitControls.enableKeys = false;
-    controls.target = character.position;
     controls.maxDistance = 6;
     controls.minDistance = 6;
     controls.enablePan = false;
@@ -226,7 +351,7 @@ function App() {
     const sphereGeo = new THREE.SphereGeometry(0.3, 30, 30);
     let cometArr = [];
 
-    function randomPos(target){
+    function randomPos(target) {
       target.position.x = (Math.random() - 0.5) * 100;
       target.position.y = (Math.random() - 0.5) * 100;
       target.position.z = (Math.random() - 0.5) * 100;
@@ -235,9 +360,9 @@ function App() {
       target.rotation.y = Math.random() * Math.PI
     }
 
-    function eatingSound(){
+    function eatingSound() {
       let rndSound = Math.ceil(Math.random() * 4)
-      switch(rndSound){
+      switch (rndSound) {
         case 1:
           eating1.play()
           break;
@@ -278,7 +403,7 @@ function App() {
         comeTar.push(rngTarget);
       })
 
-      console.log("init", comeTar)
+      // console.log("init", comeTar)
     }
 
     generateTargets()
@@ -295,7 +420,6 @@ function App() {
 
       // console.log(character.position.distanceTo(camera.position))
       // character.rotation.y = -controls.getPolarAngle()
-      character.lookAt(camera.position)
 
       //Raycaster
       // const rayDirection = new Vector3().copy(character.position).sub(camera.position).normalize();
@@ -324,7 +448,7 @@ function App() {
 
       if (keys.boost == true) {
         speed = 4;
-        boostfx.play()
+        // boostfx.play()
         setTimeout(function () {
           speed = 8;
         }, 4000)
@@ -333,7 +457,7 @@ function App() {
 
 
       //comets
-      cometArr.forEach(function (item, i) {
+      character && cometArr.forEach(function (item, i) {
         item.position.lerp(comeTar[i + arrCount], 0.0005)
         if (character.position.distanceTo(item.position) < 1) {
           randomPos(item);
@@ -353,6 +477,10 @@ function App() {
         }
       }
 
+      character && socket.emit("movement", character.position, myPeer.id);
+
+
+
       // Render
       renderer.render(scene, camera)
 
@@ -362,8 +490,6 @@ function App() {
     }
 
     tick()
-
-    console.log("xDDD")
 
 
   }, []);
@@ -379,6 +505,8 @@ function App() {
       {/* <Scoring energy = {energy}></Scoring>
       <h1>energy {energy}</h1> */}
       <canvas class="webgl"></canvas>
+      <div id="video-grid"></div>
+
     </div>
 
   )
