@@ -80,7 +80,7 @@ function App() {
 
       myPeer.on("call", call => {
         call.answer(stream)
-        const audio = document.createElement("video");
+        const audio = document.createElement("audio");
 
         call.on("stream", userVideoStream => {
           addVideoStream(audio, userVideoStream);
