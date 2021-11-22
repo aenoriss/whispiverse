@@ -11,17 +11,17 @@ import socketIOClient from "socket.io-client";
 import Peer from 'peerjs';
 import Axios from "axios";
 
-
-
-
 function App() {
   const [energy, setEnergy] = useState(0);
-
   useEffect(() => {
-    const ENDPOINT = "http://localhost:4100/";
+    const ENDPOINT = "https://whispiserver.herokuapp.com/";
     const videoGrid = document.getElementById("video-grid");
+
+    let inicometArr = []
+    let cometArr = []
+    let sw = false;
     let myPeer;
-    let character
+    let character;
 
     const myAudio = document.createElement("video");
     myAudio.muted = true;
@@ -33,6 +33,8 @@ function App() {
     //Socket
     const socket = socketIOClient(ENDPOINT);
     //FALOPEADA
+
+
 
     navigator.mediaDevices.getUserMedia({
       video: true,
@@ -54,7 +56,26 @@ function App() {
       })
 
       socket.on("comet-position", comeTar => {
-        console.log("COMETAR", comeTar);
+        if(inicometArr.length == 0){
+          inicometArr = comeTar;
+          console.log("INITCOM",inicometArr )
+        } else {
+          cometArr = comeTar;
+          console.log("COMET",cometArr )
+        }
+
+
+        cometArr = comeTar;
+        console.log("sended", cometArr)
+        if (sw == false) {
+          for (let i = 0; i < 50; i++) {
+            let comet = new THREE.Mesh(sphereGeo, Material);
+            comet.position.set(cometArr[i].position.x, cometArr[i].position.y, cometArr[i].position.z)
+            comet.name = i;
+            scene.add(comet)
+          }
+        }
+        sw = true;
       })
 
       myPeer.on("call", call => {
@@ -80,25 +101,24 @@ function App() {
         connectToNewUser(userId, stream);
       })
 
-      socket.on("comet-movement", position => {
-        console.log("position-comet", position)
-      })
-
       socket.on("user-disconnected", userId => {
         console.log(peers)
         peers[userId] && peers[userId].close();
         let target = scene.getObjectByName(userId);
         console.log("TARGET", target);
         scene.remove(target)
+      })
     })
-    })
+
+    const Material = new THREE.MeshMatcapMaterial({ color: 'orange' });
+    const sphereGeo = new THREE.SphereGeometry(0.3, 30, 30);
 
     myPeer.on("open", id => {
       socket.emit("join-room", "room1", id)
-      Axios.get('http://localhost:4100/userArr')
+      Axios.get('https://whispiserver.herokuapp.com/userArr')
         .then(function (response) {
           console.log("xDDD", response.data)
-          
+
           for (const property in response.data) {
             gltfLoader.load(
               'comet.gltf',
@@ -110,11 +130,10 @@ function App() {
                 character = scene.getObjectByName(property);
                 console.log("character", character)
 
-                if(property == myPeer.id){
+                if (property == myPeer.id) {
                   controls.target = character.position;
                   character.lookAt(camera.position)
                 }
-               
               }
             )
           }
@@ -347,18 +366,17 @@ function App() {
 
 
     //Comets
-    const Material = new THREE.MeshMatcapMaterial({ color: 'orange' });
-    const sphereGeo = new THREE.SphereGeometry(0.3, 30, 30);
-    let cometArr = [];
 
-    function randomPos(target) {
-      target.position.x = (Math.random() - 0.5) * 100;
-      target.position.y = (Math.random() - 0.5) * 100;
-      target.position.z = (Math.random() - 0.5) * 100;
+    // let cometArr = [];
 
-      target.rotation.x = Math.random() * Math.PI
-      target.rotation.y = Math.random() * Math.PI
-    }
+    // function randomPos(target) {
+    //   target.position.x = (Math.random() - 0.5) * 100;
+    //   target.position.y = (Math.random() - 0.5) * 100;
+    //   target.position.z = (Math.random() - 0.5) * 100;
+
+    //   target.rotation.x = Math.random() * Math.PI
+    //   target.rotation.y = Math.random() * Math.PI
+    // }
 
     function eatingSound() {
       let rndSound = Math.ceil(Math.random() * 4)
@@ -378,42 +396,35 @@ function App() {
       }
     }
 
-    for (let i = 0; i < 50; i++) {
 
-      const comet = new THREE.Mesh(sphereGeo, Material);
-      randomPos(comet);
-
-      cometArr.push(comet);
-      scene.add(comet)
-    }
 
     /**
      * Animate
      */
-    const clock = new THREE.Clock()
 
     //comet target
-    let comeTar = [];
-    let genCounter = 0;
-    let timeRare = 10;
+    // let comeTar = [];
+    // let genCounter = 0;
+    // let timeRare = 10;
 
-    function generateTargets() {
-      cometArr.forEach(function (item, i) {
-        let rngTarget = new Vector3((Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100);
-        comeTar.push(rngTarget);
-      })
+    // function generateTargets() {
+    //   cometArr.forEach(function (item, i) {
+    //     let rngTarget = new Vector3((Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100);
+    //     comeTar.push(rngTarget);
+    //   })
 
-      // console.log("init", comeTar)
-    }
+    // console.log("init", comeTar)
+    // }
 
-    generateTargets()
+    // generateTargets()
 
-    let arrCount = 0;
+    // let arrCount = 0;
 
+    const clock = new THREE.Clock()
     const tick = () => {
       const elapsedTime = clock.getElapsedTime()
 
-      genCounter = elapsedTime;
+      // genCounter = elapsedTime;
 
       // Update controls
       controls.update()
@@ -455,31 +466,36 @@ function App() {
       }
       // console.log("DISTANCE", character.position)
 
-
       //comets
-      character && cometArr.forEach(function (item, i) {
-        item.position.lerp(comeTar[i + arrCount], 0.0005)
-        if (character.position.distanceTo(item.position) < 1) {
-          randomPos(item);
-          eatingSound();
-          // changeEnergy()
-        }
+      let currentCometPos = []
+      character && cometArr.length > 0 && cometArr.forEach(function (item, i) {
+        let targetComet = scene.getObjectByName(i)
+        let vector = new Vector3(cometArr[i].position.x, cometArr[i].position.y, cometArr[i].position.z);
+        // console.log("VECTOR", targetComet, vector)
+        targetComet && targetComet.position.lerp(vector, 0.0005);
+        currentCometPos.push(targetComet.position)
+
+        // if (character.position.distanceTo(item.position) < 1) {
+        // eatingSound();
+        //  changeEnergy()
+        // }
       })
+
+      // socket.emit("comet", currentCometPos );
+
 
       // console.log("GC", genCounter)
 
-      if (genCounter > timeRare) {
-        timeRare = timeRare + 10;
-        comeTar = [];
-        for (let i = 0; i < 50; i++) {
-          let rngTarget = new Vector3((Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100);
-          comeTar.push(rngTarget);
-        }
-      }
+      // if (genCounter > timeRare) {
+      //   timeRare = timeRare + 10;
+      //   comeTar = [];
+      //   for (let i = 0; i < 50; i++) {
+      //     let rngTarget = new Vector3((Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100);
+      //     comeTar.push(rngTarget);
+      //   }
+      // }
 
       character && socket.emit("movement", character.position, myPeer.id);
-
-
 
       // Render
       renderer.render(scene, camera)
