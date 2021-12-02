@@ -12,16 +12,51 @@ import Peer from 'peerjs';
 import Axios from "axios";
 
 function App() {
-  const [energy, setEnergy] = useState(0);
+  const [panel, setPanel] = useState(false);
+  const [creationForm, setCreationForm] = useState(false);
+  const [currentPortal, setCurrentPortal] = useState({});
+  const [globalPortalArr, setGlobalPortalArr] = useState([]);
+
+  const [userId, setUserId] = useState();
+  const [formName, setFormName] = useState();
+  const [formImg, setFormImg] = useState();
+  const [formDescr, setFormDescr] = useState();
+  const [playerPosition, setPlayerPosition] = useState();
+  const [submitFunction, setSubmitFunction] = useState(false);
+
+  // useEffect(() => console.log("globalPortalArr", globalPortalArr), [globalPortalArr]);
+  // useEffect(() => console.log("currentPortal", currentPortal), [currentPortal]);
+
+
   useEffect(() => {
-    const ENDPOINT = "https://whispiserver.herokuapp.com/";
+    // console.log("STATUS", submitFunction)
+    if (submitFunction == true) {
+      console.log("playerPosition", playerPosition)
+      console.log({ user: userId, portal: { name: formName, img: formImg, description: formDescr, position: playerPosition, energy: 30 } })
+      Axios.post('http://localhost:4100/portalCreation', { user: userId, portal: { name: formName, img: formImg, description: formDescr, position: playerPosition, energy: 30 }})
+      setSubmitFunction(false)
+    } else {
+      // console.log("NOPE", submitFunction)
+    }
+  }, [submitFunction]);
+
+  useEffect(() => {
+    // const ENDPOINT = "https://whispiserver.herokuapp.com/";
+    const ENDPOINT = "http://localhost:4100/";
+
     const videoGrid = document.getElementById("video-grid");
 
-    let inicometArr = []
-    let cometArr = []
+    // let inicometArr = []
     let sw = false;
     let myPeer;
     let character;
+    let userScore = 0;
+    let portalArr = [];
+    let creationFormLocal = false;
+    let formNameLocal = false;
+    let formImgLocal = false;
+    let formDescrLocal = false;
+
 
     const myAudio = document.createElement("video");
     myAudio.muted = true;
@@ -34,10 +69,9 @@ function App() {
     const socket = socketIOClient(ENDPOINT);
     //FALOPEADA
 
-
+    console.log("SUBMIIIT", submitFunction)
 
     navigator.mediaDevices.getUserMedia({
-      video: true,
       audio: true,
     }).then(stream => {
       addVideoStream(myAudio, stream);
@@ -46,33 +80,46 @@ function App() {
       //   console.log(userArr, "userArr")
       // })
 
+
       socket.on("user-position", userArr => {
         for (const property in userArr) {
           let avatar = scene.getObjectByName(property);
           if (avatar && avatar.name != myPeer.id) {
-            avatar.position.set(userArr[property].x, userArr[property].y, userArr[property].z)
+            avatar.position.set(userArr[property].position.x, userArr[property].position.y, userArr[property].position.z)
           }
         }
       })
 
+
       socket.on("comet-position", comeTar => {
-        if(inicometArr.length == 0){
-          inicometArr = comeTar;
-          console.log("INITCOM",inicometArr )
-        } else {
-          cometArr = comeTar;
-          console.log("COMET",cometArr )
-        }
+        // console.log("ada", comeTar)
+        // if(inicometArr.length == 0){
+        //   inicometArr = comeTar;
+        //   console.log("INITCOM",inicometArr )
+        // } else {
+        //   cometArr = comeTar;
+        //   console.log("COMET",cometArr )
+        // }
 
 
-        cometArr = comeTar;
-        console.log("sended", cometArr)
+        // cometArr = comeTar;
+        // console.log("sended", cometArr)
         if (sw == false) {
           for (let i = 0; i < 50; i++) {
             let comet = new THREE.Mesh(sphereGeo, Material);
-            comet.position.set(cometArr[i].position.x, cometArr[i].position.y, cometArr[i].position.z)
+            comet.position.x = comeTar[i].position.x
+            comet.position.y = comeTar[i].position.y
+            comet.position.z = comeTar[i].position.z
             comet.name = i;
             scene.add(comet)
+          }
+        } else {
+          for (let i = 0; i < 50; i++) {
+            let targetComet = scene.getObjectByName(i)
+            targetComet.position.x = comeTar[i].position.x
+            targetComet.position.y = comeTar[i].position.y
+            targetComet.position.z = comeTar[i].position.z
+
           }
         }
         sw = true;
@@ -88,6 +135,7 @@ function App() {
       })
 
       socket.on("user-connected", userId => {
+
         gltfLoader.load(
           'comet.gltf',
           (model) => {
@@ -108,6 +156,7 @@ function App() {
         console.log("TARGET", target);
         scene.remove(target)
       })
+
     })
 
     const Material = new THREE.MeshMatcapMaterial({ color: 'orange' });
@@ -115,7 +164,10 @@ function App() {
 
     myPeer.on("open", id => {
       socket.emit("join-room", "room1", id)
-      Axios.get('https://whispiserver.herokuapp.com/userArr')
+
+      setUserId(myPeer.id)
+      // Axios.get('https://whispiserver.herokuapp.com/userArr')
+      Axios.get('http://localhost:4100/userArr')
         .then(function (response) {
           console.log("xDDD", response.data)
 
@@ -128,7 +180,6 @@ function App() {
                 model.scene.scale.set(0.5, 0.5, 0.5)
                 scene.add(model.scene.children[0])
                 character = scene.getObjectByName(property);
-                console.log("character", character)
 
                 if (property == myPeer.id) {
                   controls.target = character.position;
@@ -137,12 +188,82 @@ function App() {
               }
             )
           }
+
+          Axios.get('http://localhost:4100/portalArr')
+            .then(function (data) {
+              portalArr = data["data"];
+              portalArr.length > 0 && portalArr.forEach((portal) => {
+                gltfLoader.load(
+                  'portal.gltf',
+                  (model) => {
+                    model.scene.position.set(portal.position.x, portal.position.y, portal.position.z);
+                    model.scene.children[0].name = "portal";
+                    model.scene.scale.set(2, 2, 2)
+                    scene.add(model.scene.clone())
+                  }
+                )
+              })
+            })
         })
+    })
+
+    socket.on("eating-sound", data => {
+      if (data.id == myPeer.id) {
+        userScore = data.score;
+        let rndSound = Math.ceil(Math.random() * 4)
+        switch (rndSound) {
+          case 1:
+            eating1.play()
+            break;
+          case 2:
+            eating2.play()
+            break;
+          case 3:
+            eating3.play()
+            break;
+          case 4:
+            eating4.play()
+            break;
+        }
+
+      }
+    })
+
+    socket.on("portal-spawn", portal => {
+      console.log("PORTALLL", portal);
+      if (portal["type"] == "create") {
+        gltfLoader.load(
+          'portal.gltf',
+          (model) => {
+            model.scene.position.x = portal["portal"].position.x
+            model.scene.position.y = portal["portal"].position.y
+            model.scene.position.z = portal["portal"].position.z
+
+            model.scene.name = portal["portal"].id;
+            model.scene.scale.set(2, 2, 2)
+            scene.add(model.scene.clone())
+            console.log("A NEW PORTAL HAS SPAWNED", portal["portal"]);
+          }
+        )
+      } else {
+        console.log("PORTAL DEATH", portal)
+        let target = scene.getObjectByName(portal["portal"].id);
+        setPanel(false);
+        console.log("TARGET", target);
+        scene.remove(target)
+      }
+
+      portalArr = portal["array"];
+
+    })
+
+    socket.on("portal-update", portal => {
+      portalArr = portal;
     })
 
     function connectToNewUser(userId, stream) {
       const call = myPeer.call(userId, stream);
-      const audio = document.createElement("video");
+      const audio = document.createElement("audio");
       call.on("stream", userVideoStream => {
         addVideoStream(audio, userVideoStream)
       })
@@ -272,7 +393,7 @@ function App() {
       soundtrack.setBuffer(buffer);
       soundtrack.setLoop(true);
       soundtrack.setVolume(0.5);
-      // soundtrack.play();
+      soundtrack.play();
     });
 
     audioLoader.load('boostfx.mp3', function (buffer) {
@@ -330,6 +451,16 @@ function App() {
     const light = new THREE.AmbientLight(0xffffff, 4);
     scene.add(light);
 
+    function distanceToPortals() {
+      let sw = false;
+      portalArr.length > 0 && portalArr.forEach((portal, i) => {
+        if (character.position.distanceTo(portal.position) < 10) {
+          sw = i
+        }
+      })
+      return sw;
+    }
+
 
     document.addEventListener("keydown", onDocumentKeyDown, false);
     function onDocumentKeyDown(event) {
@@ -340,6 +471,24 @@ function App() {
       } else if (keyCode == 16) {
         // console.log("boost");
         keys["boost"] = true;
+      } else if (keyCode == 32) {
+        let closePortal = distanceToPortals()
+        if (userScore >= 3 && closePortal == false) {
+          console.log("userscore", userScore);
+          if (creationFormLocal == false) {
+            creationFormLocal = true;
+          } else {
+            creationFormLocal = false;
+          }
+          // userScore = userScore - 3;
+          // socket.emit("portalCreation", { user: myPeer.id, portal: { name: "Not going to make it. How to off myself?", img: "defaultImage.jpg", description: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.", position: new THREE.Vector3(character.position.x, character.position.y, character.position.z), energy: 30 } });
+        } 
+        if (userScore > 0 && closePortal !== false) {
+          console.log("AFDASDASDAD", closePortal);
+          userScore = userScore - 1;
+          socket.emit("portalFeeding", { user: myPeer.id, portal: closePortal });
+
+        }
       }
     }
 
@@ -364,6 +513,11 @@ function App() {
     controls.minDistance = 6;
     controls.enablePan = false;
 
+    function handleChange(e) {
+      e.preventDefault();
+      console.log("SUCESSSSSSS")
+    }
+
 
     //Comets
 
@@ -377,26 +531,6 @@ function App() {
     //   target.rotation.x = Math.random() * Math.PI
     //   target.rotation.y = Math.random() * Math.PI
     // }
-
-    function eatingSound() {
-      let rndSound = Math.ceil(Math.random() * 4)
-      switch (rndSound) {
-        case 1:
-          eating1.play()
-          break;
-        case 2:
-          eating2.play()
-          break;
-        case 3:
-          eating3.play()
-          break;
-        case 4:
-          eating4.play()
-          break;
-      }
-    }
-
-
 
     /**
      * Animate
@@ -423,7 +557,8 @@ function App() {
     const clock = new THREE.Clock()
     const tick = () => {
       const elapsedTime = clock.getElapsedTime()
-
+      setCreationForm(creationFormLocal);
+      character && setPlayerPosition(character.position);
       // genCounter = elapsedTime;
 
       // Update controls
@@ -457,6 +592,22 @@ function App() {
         character.position.add(new Vector3().copy(character.position).sub(camera.position).normalize().divide(new Vector3(speed, speed, speed)))
       }
 
+      //Side Panel
+      if (character && portalArr && portalArr.length > 0) {
+        let sw = false;
+        setPanel(false);
+        setCurrentPortal([]);
+
+        portalArr.forEach((item, i) => {
+          if (character.position.distanceTo(item.position) < 5) {
+            setPanel(true);
+            setCurrentPortal(i);
+            setGlobalPortalArr(portalArr)
+            sw = true;
+          }
+        })
+      }
+
       if (keys.boost == true) {
         speed = 4;
         // boostfx.play()
@@ -466,20 +617,13 @@ function App() {
       }
       // console.log("DISTANCE", character.position)
 
-      //comets
-      let currentCometPos = []
-      character && cometArr.length > 0 && cometArr.forEach(function (item, i) {
-        let targetComet = scene.getObjectByName(i)
-        let vector = new Vector3(cometArr[i].position.x, cometArr[i].position.y, cometArr[i].position.z);
-        // console.log("VECTOR", targetComet, vector)
-        targetComet && targetComet.position.lerp(vector, 0.0005);
-        currentCometPos.push(targetComet.position)
+      //comets     
 
-        // if (character.position.distanceTo(item.position) < 1) {
-        // eatingSound();
-        //  changeEnergy()
-        // }
-      })
+      // if (character.position.distanceTo(item.position) < 1) {
+      // eatingSound();
+      //  changeEnergy()
+      // }
+
 
       // socket.emit("comet", currentCometPos );
 
@@ -515,13 +659,57 @@ function App() {
   //   console.log("xDdd", energy)
   // }
 
-  return (
 
+  return (
     <div>
       {/* <Scoring energy = {energy}></Scoring>
       <h1>energy {energy}</h1> */}
       <canvas class="webgl"></canvas>
       <div id="video-grid"></div>
+      <div id="viewport">
+        {panel == true && globalPortalArr.length > 0 && globalPortalArr[currentPortal] && <div id="menuPanel">
+          <img class="logoStyle" src={globalPortalArr[currentPortal]["img"]}></img>
+          <div class="prInfo">
+            <h1>{globalPortalArr[currentPortal]["name"]}</h1>
+            <p>{globalPortalArr[currentPortal]["description"]}</p>
+          </div>
+          <div class="remainingTime">
+            <p class="secTitle">{globalPortalArr[currentPortal]["energy"]}</p>
+            <p class="secDescr">Seconds Remaining</p>
+          </div>
+          <h2>Press spacebar to feed!</h2>
+        </div>}
+
+        {creationForm == true && panel == false && <div id="menuPanel">
+          <div class="prInfo">
+            <h1>Create a new portal</h1>
+            <p>Description</p>
+          </div>
+          <div>
+            <form enctype="multipart/form-data">
+              <label>
+                Name:
+                <input type="text" onChange={(e => { setFormName(e.target["value"]) })} />
+              </label>
+              <label>
+                Description:
+                <input type="text" onChange={(e => { setFormDescr(e.target["value"]) })} />
+              </label>
+              <input type="button" onClick={e => { setSubmitFunction(true) }} />
+              <input
+                type="file"
+                accept="image/png, image/gif, image/jpeg"
+                name="postImg" 
+                onChange={(e) => setFormImg(e.target.files[0])}
+              />
+            </form>
+          </div>
+          <h2>Create</h2>
+        </div>}
+        <div class="camera">
+          <canvas class="webgl"></canvas>
+        </div>
+      </div>
 
     </div>
 
