@@ -33,7 +33,7 @@ function App() {
     if (submitFunction == true) {
       console.log("playerPosition", playerPosition)
       console.log({ user: userId, portal: { name: formName, img: formImg, description: formDescr, position: playerPosition, energy: 30 } })
-      Axios.post('http://localhost:4100/portalCreation', { user: userId, portal: { name: formName, img: formImg, description: formDescr, position: playerPosition, energy: 30 }})
+      Axios.post('https://whispiserver.herokuapp.com/portalCreation', { user: userId, portal: { name: formName, img: formImg, description: formDescr, position: playerPosition, energy: 30 }})
       setSubmitFunction(false)
     } else {
       // console.log("NOPE", submitFunction)
@@ -41,8 +41,8 @@ function App() {
   }, [submitFunction]);
 
   useEffect(() => {
-    // const ENDPOINT = "https://whispiserver.herokuapp.com/";
-    const ENDPOINT = "http://localhost:4100/";
+    const ENDPOINT = "https://whispiserver.herokuapp.com/";
+    // const ENDPOINT = "http://localhost:4100/";
 
     const videoGrid = document.getElementById("video-grid");
 
@@ -167,7 +167,7 @@ function App() {
 
       setUserId(myPeer.id)
       // Axios.get('https://whispiserver.herokuapp.com/userArr')
-      Axios.get('http://localhost:4100/userArr')
+      Axios.get('https://whispiserver.herokuapp.com/userArr')
         .then(function (response) {
           console.log("xDDD", response.data)
 
@@ -189,7 +189,7 @@ function App() {
             )
           }
 
-          Axios.get('http://localhost:4100/portalArr')
+          Axios.get('https://whispiserver.herokuapp.com/portalArr')
             .then(function (data) {
               portalArr = data["data"];
               portalArr.length > 0 && portalArr.forEach((portal) => {
