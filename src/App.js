@@ -393,7 +393,7 @@ function App() {
       soundtrack.setBuffer(buffer);
       soundtrack.setLoop(true);
       soundtrack.setVolume(0.5);
-      soundtrack.play();
+      // soundtrack.play();
     });
 
     audioLoader.load('boostfx.mp3', function (buffer) {
@@ -461,6 +461,7 @@ function App() {
       return sw;
     }
 
+    let characterTarget = scene.getObjectByName(myPeer.id);
 
     document.addEventListener("keydown", onDocumentKeyDown, false);
     function onDocumentKeyDown(event) {
@@ -471,6 +472,12 @@ function App() {
       } else if (keyCode == 16) {
         // console.log("boost");
         keys["boost"] = true;
+      } else if (keyCode == 86) {
+        if(characterTarget.visible == true){
+          characterTarget.visible = false;
+        } else {
+          characterTarget.visible = true;
+        }
       } else if (keyCode == 32) {
         let closePortal = distanceToPortals()
         if (userScore >= 3 && closePortal == false) {
@@ -501,7 +508,7 @@ function App() {
       } else if (keyCode == 16) {
         // console.log("boost");
         keys["boost"] = false;
-      }
+      } 
     }
 
 
