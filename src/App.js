@@ -610,7 +610,7 @@ function App() {
 
       if (keys.boost == true) {
         speed = 4;
-        // boostfx.play()
+        boostfx.play()
         setTimeout(function () {
           speed = 8;
         }, 4000)
