@@ -1,70 +1,58 @@
-# Getting Started with Create React App
+# Whispiverse
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A browser 3D multiplayer world where players fly around as comets, talk over proximity voice, and leave behind portals that only survive if others keep them alive.
 
-## Available Scripts
+## Why I built it
 
-In the project directory, you can run:
+This is a 2022 WebXR and 3D experiment. I wanted a shared space that was social first: you can hear the people near you, and the marks you leave on the world are not permanent unless the community feeds them. The Shattered Lands client was later forked from this codebase, so Whispiverse is where a lot of that networking and Three.js scene work started.
 
-### `yarn start`
+## What it does
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+- Every player is a comet-shaped avatar in a shared Three.js scene
+- Positions sync in real time over socket.io, so everyone sees everyone move
+- Proximity voice chat over WebRTC, connected peer to peer
+- Collect items to raise your score
+- Spend score to plant a portal: a point of interest with a name, description, and image
+- Portals have energy that drains over time and die unless nearby players feed them
+- A soundtrack and collect sound effects, mixed through the Three.js audio listener
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+## How it works
 
-### `yarn test`
+Whispiverse runs a React shell over a hand-written Three.js scene. State and voice travel on two separate channels at the same time.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+```mermaid
+flowchart LR
+  A[Player A] -->|movement, feed, create| SIO[socket.io server]
+  B[Player B] -->|movement| SIO
+  SIO -.->|user-position, comet-position, portal-spawn| A
+  SIO -.->|broadcast| B
+  A <-->|WebRTC audio via PeerJS| B
+```
 
-### `yarn build`
+### Two channels: state on socket.io, voice on WebRTC
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+The game server carries authoritative world state over socket.io. Each frame the client emits its avatar position, and the server rebroadcasts everyone's positions plus a swarm of 50 comets that it owns. Voice is separate: PeerJS opens WebRTC audio calls directly between players, so speech never round-trips through the game server. The comet swarm is reconciled cheaply. On the first `comet-position` message the client builds all 50 meshes once, and on every message after it only writes the new x, y, and z onto the existing meshes by name, instead of tearing the swarm down and rebuilding it. The tradeoff is the voice topology: a full mesh of WebRTC calls is simple and low-latency for a small room, but it does not scale past a handful of players, which is fine for a demo.
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### Portals as a decaying, shared layer
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+Portals are the part players leave behind. Creating one costs score (you need at least 3) and posts a name, description, and image to the backend. Each portal carries an energy value that counts down, shown as seconds remaining when you stand near it, and feeding a portal spends one of your points to keep it alive. So the world's landmarks are collectively maintained: stop feeding them and they disappear.
 
-### `yarn eject`
+## Tech stack
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+- Frontend: React 17, Three.js 0.133, dat.gui, Webpack (Create React App shell)
+- Realtime: socket.io for state, PeerJS (WebRTC) for proximity voice
+- Backend: an Express companion server (not in this repo)
+- HTTP: Axios for portal and user data
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+## Running it
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+```bash
+yarn install
+yarn start        # http://localhost:3000
+```
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+Two caveats if you clone this. It needs the companion server (portal and user endpoints, socket events), which originally ran on Heroku and is no longer up, so you would point the client at your own. And it asks for microphone access on load, because voice connects as soon as you join the room.
 
-## Learn More
+## Status
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `yarn build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+Prototype from 2022, and the ancestor of the Shattered Lands client. The 3D world, movement sync, voice, and portal mechanics all work against a live server; this repo is the client half.
