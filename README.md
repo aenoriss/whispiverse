@@ -31,16 +31,7 @@ flowchart LR
 
 ### Two channels: state on socket.io, voice on WebRTC
 
-The game server carries authoritative world state over socket.io. Each frame the client emits its avatar position, and the server rebroadcasts everyone's positions plus a swarm of 50 comets it owns. Voice runs on its own path: PeerJS opens WebRTC audio calls straight between players, so speech never round-trips through the game server. The comet swarm is reconciled cheaply. On the first `comet-position` message the client builds all 50 meshes. After that, each update just writes new x, y, z onto the existing meshes by name.
-
-```mermaid
-flowchart TD
-  M[comet-position message] --> Q{First message?}
-  Q -->|yes| B[Build 50 comet meshes]
-  Q -->|no| U[Write x/y/z onto existing meshes by name]
-```
-
-The full WebRTC voice mesh caps a room at a handful of players.
+The game server carries authoritative world state over socket.io. Each frame the client emits its avatar position, and the server rebroadcasts everyone's positions plus a swarm of 50 comets it owns. Voice runs on its own path: PeerJS opens WebRTC audio calls straight between players, so speech never round-trips through the game server. The comet swarm is reconciled cheaply. On the first `comet-position` message the client builds all 50 meshes. After that, each update just writes new x, y, z onto the existing meshes by name. The full WebRTC voice mesh caps a room at a handful of players.
 
 ### Portals as a decaying, shared layer
 
