@@ -1,4 +1,4 @@
-<img src="assets/header.webp" alt="Whispiverse" width="400">
+<img src="assets/header.webp" alt="Whispiverse" width="100%">
 
 # Whispiverse
 
