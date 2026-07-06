@@ -1,3 +1,5 @@
+<img src="assets/header.webp" alt="Whispiverse" width="400">
+
 # Whispiverse
 
 A browser 3D multiplayer world where players fly around as comets, talk over proximity voice, and leave behind portals that only survive if others keep them alive.
