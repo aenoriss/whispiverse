@@ -164,39 +164,6 @@ function sparkTexture() {
   return new THREE.CanvasTexture(c)
 }
 
-// A comet's rays: two thin crossed lines of light fading to nothing at their ends, with no
-// glow between them.
-function raysTexture() {
-  const c = document.createElement('canvas')
-  c.width = c.height = 128
-  const g = c.getContext('2d')
-  g.globalCompositeOperation = 'lighter'
-  for (const turn of [0, Math.PI / 2]) {
-    g.save(); g.translate(64, 64); g.rotate(turn)
-    const ray = g.createLinearGradient(-62, 0, 62, 0)
-    ray.addColorStop(0, 'rgba(255,255,255,0)'); ray.addColorStop(0.5, 'rgba(255,255,255,1)'); ray.addColorStop(1, 'rgba(255,255,255,0)')
-    g.fillStyle = ray
-    g.beginPath(); g.moveTo(-62, 0); g.lineTo(0, -2.6); g.lineTo(62, 0); g.lineTo(0, 2.6); g.closePath(); g.fill()
-    g.restore()
-  }
-  return new THREE.CanvasTexture(c)
-}
-
-// A comet's body: a small round ball of light with a soft edge.
-function orbTexture() {
-  const c = document.createElement('canvas')
-  c.width = c.height = 64
-  const g = c.getContext('2d')
-  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 30)
-  grad.addColorStop(0, 'rgba(255,255,255,1)')
-  grad.addColorStop(0.55, 'rgba(255,255,255,0.95)')
-  grad.addColorStop(0.8, 'rgba(255,255,255,0.25)')
-  grad.addColorStop(1, 'rgba(255,255,255,0)')
-  g.fillStyle = grad
-  g.fillRect(0, 0, 64, 64)
-  return new THREE.CanvasTexture(c)
-}
-
 // A thin circle, for the ring a collected spark leaves.
 function ringTexture() {
   const c = document.createElement('canvas')
@@ -286,6 +253,10 @@ export class World {
     this.portals = new Map()      // id -> what is drawn for one topic
     this.sparks = []
     this.bursts = []
+    this.flyers = []              // orbs on their way into the comet that took them
+    this.floaters = []            // "+1" and the like, rising and fading
+    this.combo = 0
+    this.kick = 0                 // a short push on the camera when you take an orb
     this.keys = { forward: false, brake: false, boost: false }
     this.velocity = new THREE.Vector3()
     this.sendIn = 0
@@ -343,8 +314,6 @@ export class World {
     this.cloud = cloudTexture()
     this.star = starTexture()
     this.sparkMap = sparkTexture()
-    this.orb = orbTexture()
-    this.rays = raysTexture()
     this.ringMap = ringTexture()
 
     // Dust. The sky is a picture at infinity, so without something near the comet there is
@@ -454,10 +423,18 @@ export class World {
     socket.on('spark:eaten', (e) => {
       const p = this.players.get(e.by)
       if (p) p.score = e.score
-      if (this.sparks[e.index]) this.burst(this.sparks[e.index].position)
+      // The orb does not just vanish: it shoots into whoever took it, and they pulse.
+      if (p && this.sparks[e.index] && this.sparks[e.index].userData.live) this.flyIn(this.sparks[e.index].position, p)
       if (this.me && e.by === this.me.id) {
-        const fx = this.collect[Math.floor(Math.random() * this.collect.length)]
-        if (fx.buffer) { if (fx.isPlaying) fx.stop(); fx.play() }
+        // Taking several in quick succession is a run: each one is pitched higher than the
+        // last and the run is counted beside your comet.
+        const now = performance.now()
+        this.combo = now - (this.lastTaken || 0) < 1700 ? this.combo + 1 : 1
+        this.lastTaken = now
+        const fx = this.collect[(this.combo - 1) % this.collect.length]
+        if (fx.buffer) { if (fx.isPlaying) fx.stop(); fx.setPlaybackRate(1 + Math.min(this.combo - 1, 12) * 0.06); fx.play() }
+        this.kick = Math.min(1, 0.35 + this.combo * 0.08)
+        if (p) { p.pop = 1; this.float(p, this.combo > 1 ? `+1  ×${this.combo}` : '+1') }
         this.onChange({ score: e.score, ate: true })
       }
     })
@@ -558,8 +535,9 @@ export class World {
 
   // ---------------------------------------------------------------- players
 
-  // A comet is light, not a model: a star for a head, a glow in its own colour round it,
-  // and a tail of the same colour laid down where it has been. Standing still it is a star.
+  // A comet is light, not a model: a small four-rayed star for a head, a touch of its own
+  // colour at the centre, and a tail of that colour laid down where it has been. There is
+  // no halo round it, and it is kept dim enough that the colour reads.
   addPlayer(p) {
     if (this.players.has(p.id)) return
     const isMe = this.me && p.id === this.me.id
@@ -573,10 +551,9 @@ export class World {
       group.add(s)
       return s
     }
-    // No halo: the head is a four-rayed star in the comet's colour with a small pale body at
-    // its centre. Rays and a tail are what tell it from a spark at a glance.
-    const head = add(this.rays, colour.clone().lerp(new THREE.Color(0xffffff), 0.35), 2.6, 1)
-    const coma = add(this.orb, colour.clone().lerp(new THREE.Color(0xffffff), 0.6), 0.5, 1)
+    const pale = colour.clone().lerp(new THREE.Color(CREAM), 0.5)
+    const coma = add(this.glow, colour, 1.1, 0.5)
+    const head = add(this.star, pale, 1.7, 0.85)
 
     // The tail. Light is added, so a darker colour further back is a fainter point: it thins out.
     // The points overlap heavily, so each one is kept faint: together they make a solid streak.
@@ -593,14 +570,14 @@ export class World {
     const tail = new THREE.Points(tailGeo, new THREE.PointsMaterial({ map: this.glow, size: 0.85, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }))
     tail.frustumCulled = false
     // Your own tail points pile up between you and the camera, so it is drawn a little fainter.
-    if (isMe) { tail.material.opacity = 0.7; tail.material.size = 0.6 }
+    if (isMe) { tail.material.opacity = 0.3; tail.material.size = 0.5 }
     this.scene.add(tail)
 
     const tag = isMe ? null : this.nameTag(p)
     if (tag) group.add(tag)
     group.position.fromArray(p.p)
     this.scene.add(group)
-    this.players.set(p.id, { group, colour, pale: colour.clone().lerp(new THREE.Color(0xffffff), 0.45), head, coma, tail, tag, tailAt: 0, target: new THREE.Vector3().fromArray(p.p), name: p.name, hue: p.hue, role: p.role || '', score: p.score || 0, shown: -1, glow: 3.2, isMe, bot: !!p.bot })
+    this.players.set(p.id, { group, colour, pale, head, coma, tail, tag, tailAt: 0, target: new THREE.Vector3().fromArray(p.p), name: p.name, hue: p.hue, role: p.role || '', score: p.score || 0, shown: -1, glow: 3.2, isMe, bot: !!p.bot })
     if (isMe) { this.controls.target.copy(group.position); this.camera.position.copy(group.position).add(new THREE.Vector3(0, 2, 7)) }
   }
 
@@ -615,10 +592,10 @@ export class World {
 
   // The sparks a comet holds show as how bright it is.
   showSparks(p) {
-    // Nothing is added round the comet: each spark taken in makes the comet itself larger
-    // and its core hotter, up to 12 sparks.
-    const charge = Math.min(1, p.score / 12)
-    p.size = 1 + charge * 0.9
+    // Nothing is added round the comet: each spark taken in makes the comet itself a little
+    // larger and makes it give off more of its own colour, up to 12 sparks.
+    const charge = p.charge = Math.min(1, p.score / 12)
+    p.size = 1 + charge * 0.5
     // Your own count is written under your comet, where you are already looking.
     if (p.isMe) {
       if (p.count) p.group.remove(p.count)
@@ -629,7 +606,7 @@ export class World {
       p.group.add(p.count)
     }
     p.shown = p.score
-    p.tail.material.size = (p.isMe ? 0.6 : 0.85) * (1 + charge * 0.5)
+    p.tail.material.size = (p.isMe ? 0.5 : 0.85) * (1 + charge * 0.5)
   }
 
   removePlayer(id) {
@@ -664,6 +641,27 @@ export class World {
       if (t.distanceToSquared(new THREE.Vector3(p[0], p[1], p[2])) > 100) s.position.set(p[0], p[1], p[2])
       t.set(p[0], p[1], p[2])
     })
+  }
+
+  // A taken orb streaks from where it was into the comet that took it.
+  flyIn(from, p) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.sparkMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }))
+    s.position.copy(from)
+    s.scale.setScalar(2)
+    s.userData = { from: from.clone(), to: p, age: 0 }
+    this.scene.add(s)
+    this.flyers.push(s)
+  }
+
+  // A few words that rise from a comet and fade: what you just gained.
+  float(p, text) {
+    const s = label(text, 58, '#ffd98a')
+    s.scale.set(3.4, 0.64, 1)
+    s.material.depthTest = false
+    s.position.copy(p.group.position).add(new THREE.Vector3(1.6, 0.6, 0))
+    s.userData.age = 0
+    this.scene.add(s)
+    this.floaters.push(s)
   }
 
   // A collected spark goes out with a flash and a ring that opens and fades where it was.
@@ -960,7 +958,8 @@ export class World {
       mine.group.position.add(step)
       this.camera.position.add(step)              // the camera rides along, keeping its orbit
       this.controls.target.copy(mine.group.position)
-      this.camera.fov += ((this.keys.boost && this.keys.forward ? 84 : 70) - this.camera.fov) * Math.min(1, dt * 4)
+      this.kick = Math.max(0, this.kick - dt * 4)
+      this.camera.fov += ((this.keys.boost && this.keys.forward ? 84 : 70) + this.kick * 5 - this.camera.fov) * Math.min(1, dt * (this.kick > 0 ? 14 : 4))
       this.camera.updateProjectionMatrix()
 
       this.sendIn -= dt
@@ -1022,18 +1021,21 @@ export class World {
         a[0] = p.group.position.x; a[1] = p.group.position.y; a[2] = p.group.position.z
         p.tail.geometry.attributes.position.needsUpdate = true
       }
-      // The head twinkles and turns; the sparks it holds circle it.
-      // A dash flares the comet, a shield makes it flicker, and a hunter after you burns red.
+      // A dash swells the comet for a moment, a shield makes it blink, a hunter after you
+      // turns red, and the sparks it holds make it larger and its own colour stronger.
       p.flare = Math.max(0, (p.flare || 0) - dt)
       p.shield = Math.max(0, (p.shield || 0) - dt)
-      const swell = (p.size || 1) * (1 + p.flare * 2.4)
-      p.head.scale.setScalar(2.6 * swell)
-      p.head.material.rotation = Math.PI / 4            // rays on the diagonals, so it reads as an X and not a plus
-      p.coma.scale.setScalar((0.5 + Math.sin(now * 3 + i * 2.1) * 0.04) * swell)
-      p.head.material.opacity = p.shield > 0 ? 0.45 + Math.sin(now * 18) * 0.35 : 1
-      p.coma.material.color.copy(p.hunting ? EMBER : p.pale)
+      const swell = (p.size || 1) * (1 + p.flare * 1.6)
+      p.head.scale.setScalar(1.7 * swell)
+      p.head.material.rotation = now * 0.25 + i                      // the rays turn slowly
+      p.coma.scale.setScalar((1.1 + Math.sin(now * 3 + i * 2.1) * 0.08) * swell)
+      p.head.material.opacity = p.shield > 0 ? 0.4 + Math.sin(now * 18) * 0.3 : 0.85
+      p.coma.material.opacity = 0.5 + (p.charge || 0) * 0.4
       p.head.material.color.copy(p.hunting ? EMBER : p.pale)
+      p.coma.material.color.copy(p.hunting ? EMBER : p.colour)
       if (p.shown !== p.score) this.showSparks(p)
+      // The count under your comet jumps when it goes up.
+      if (p.count) { p.pop = Math.max(0, (p.pop || 0) - dt * 4); const k = 1 + p.pop * 0.6; p.count.scale.set(3 * k, 0.56 * k, 1) }
       if (p.bubble) {
         p.bubbleFor -= dt
         p.bubble.material.opacity = Math.min(1, p.bubbleFor)
@@ -1058,6 +1060,26 @@ export class World {
       s.scale.setScalar(size)
       s.material.opacity = 0.85 + beat * 0.15
     })
+    for (let n = this.flyers.length - 1; n >= 0; n--) {
+      const f = this.flyers[n], u = f.userData
+      u.age += dt
+      const k = Math.min(1, u.age / 0.16)
+      f.position.lerpVectors(u.from, u.to.group.position, k * k)
+      f.scale.setScalar(2 - k * 1.2)
+      if (k >= 1) {
+        this.scene.remove(f); this.flyers.splice(n, 1)
+        this.burst(u.to.group.position, 0.7)
+        u.to.flare = Math.max(u.to.flare || 0, 0.14)
+      }
+    }
+    for (let n = this.floaters.length - 1; n >= 0; n--) {
+      const f = this.floaters[n]
+      f.userData.age += dt
+      const k = f.userData.age / 0.8
+      if (k >= 1) { this.scene.remove(f); this.floaters.splice(n, 1); continue }
+      f.position.y += dt * 2.2
+      f.material.opacity = 1 - k * k
+    }
     for (let n = this.bursts.length - 1; n >= 0; n--) {
       const f = this.bursts[n]
       f.userData.age += dt

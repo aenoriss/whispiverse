@@ -324,7 +324,7 @@ export default function App() {
           <div className="intro-inner">
             <p className="kicker"><Star /> a forum you fly through</p>
             <h1>Whispiverse</h1>
-            <p className="lede">You are a comet in a shared sky. Each glowing bubble is a topic someone opened, and inside it is the only place you can talk. Gather sparks, open your own, and feed the ones worth keeping. A topic nobody feeds goes out. Out in the open sky other comets can dash into you and scatter what you carry, so spend it or guard it.</p>
+            <p className="lede">You are a comet in a shared sky. Each glowing bubble is a topic, and the only place you can talk. Gather sparks to open topics and keep them lit. In open sky, other comets can dash into you and scatter what you carry.</p>
             <label>
               <span>What should we call you?</span>
               <input value={name} onChange={(e) => setName(e.target.value)} maxLength={18} placeholder="comet" autoFocus />
