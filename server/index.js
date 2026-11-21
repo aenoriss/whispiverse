@@ -11,6 +11,15 @@ const path = require('path');
 const { Server } = require('socket.io');
 
 const PORT = Number(process.env.PORT || 4100);
+// The world's clock. SLOW=n runs the whole world n times slower: everything that reads the
+// time reads it from here, and both timers are stretched to match. It exists for making
+// recordings, where the page is slowed by the same factor so every frame can be captured.
+// With PACE=1 set, GET /pace?slow=n changes the factor while running, so a world can be left
+// to fill up at full speed and then slowed for the take.
+let SLOW = Number(process.env.SLOW || 1);
+let worldAt = Date.now(), realAt = worldAt;
+const clock = () => worldAt + (Date.now() - realAt) / SLOW;
+const setPace = (n) => { worldAt = clock(); realAt = Date.now(); SLOW = Math.max(1, Math.min(20, n)); };
 const WORLD = 85;            // sparks and topics live within this distance of the centre
 // The economy, in one place.
 //   Sparks are found in open sky, where they can be knocked out of you. What you carry
@@ -66,6 +75,11 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, players: Object.keys(players).length, portals: portals.length, sparks: sparks.length, stepMs: +stepCost.toFixed(2) }));
   }
+  if (url === '/pace' && process.env.PACE === '1') {
+    setPace(Number(new URL(req.url, 'http://x').searchParams.get('slow')) || 1);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ slow: SLOW }));
+  }
   const file = path.join(DIST, path.normalize(url === '/' ? '/index.html' : url));
   if (!file.startsWith(DIST)) { res.writeHead(403); return res.end(); }
   fs.readFile(file, (err, data) => {
@@ -93,7 +107,7 @@ function whisper(from, text) {
     const listener = players[id];
     if (listener && dist(listener.p, topic.p) < ZONE) socket.emit('whisper', line);
   }
-  topic.thread = (topic.thread || []).concat({ id: from.id, name: from.name, hue: from.hue, bot: !!from.bot, text, t: Date.now() }).slice(-THREAD_KEEPS);
+  topic.thread = (topic.thread || []).concat({ id: from.id, name: from.name, hue: from.hue, bot: !!from.bot, text, t: clock() }).slice(-THREAD_KEEPS);
   io.emit('portal:thread', { id: topic.id, thread: topic.thread });
   if (!from.bot && sims) sims.heard(topic, from);
   return true;
@@ -167,13 +181,13 @@ io.on('connection', (socket) => {
   socket.on('move', (p) => {
     const me = players[socket.id];
     if (!me || !Array.isArray(p) || p.length !== 3 || !p.every(Number.isFinite)) return;
-    if (me.downUntil > Date.now()) return;       // a scattered comet is nowhere until it is put back
+    if (me.downUntil > clock()) return;      // a scattered comet is nowhere until it is put back
     me.p = p;
   });
 
   socket.on('dash', (reply) => {
     const me = players[socket.id];
-    const ok = !!me && dash(me, Date.now());
+    const ok = !!me && dash(me, clock());
     if (typeof reply === 'function') reply({ ok });
   });
 
@@ -183,8 +197,8 @@ io.on('connection', (socket) => {
     const me = players[socket.id];
     const answer = typeof reply === 'function' ? reply : () => {};
     const line = clean(text, 140);
-    if (!me || !line || Date.now() - lastWhisper < 500) return answer({ error: 'Too fast.' });
-    lastWhisper = Date.now();
+    if (!me || !line || clock() - lastWhisper < 500) return answer({ error: 'Too fast.' });
+    lastWhisper = clock();
     answer(whisper(me, line) ? { ok: true } : { error: 'You can only talk inside a topic.' });
   });
 
@@ -226,7 +240,7 @@ io.on('connection', (socket) => {
 const BOTS = Number(process.env.BOTS === undefined ? 14 : process.env.BOTS);
 if (BOTS > 0) {
   sims = require('./sims')({
-    count: BOTS, players, portals, sparks, io,
+    count: BOTS, players, portals, sparks, io, clock,
     dist, somewhere, zoneOf, exposed, dash, whisper, plantPortal, feed, give,
     rules: { ZONE, PORTAL_COST, PORTAL_SPACING, WORLD },
   });
@@ -238,10 +252,10 @@ if (BOTS > 0) {
 // The clock asks for 20 steps a second and takes whatever the machine's timer gives it
 // (about 16 on Windows): every step moves things by the time that really passed, so the
 // world runs at the same speed either way. Every step is sent to everyone, in order.
-let lastStep = Date.now(), stepCost = 0;
-setInterval(() => {
+let lastStep = clock(), stepCost = 0;
+(function step() {
   const began = process.hrtime.bigint();
-  const now = Date.now();
+  const now = clock();
   const STEP = Math.min(0.15, (now - lastStep) / 1000);
   lastStep = now;
   if (sims) sims.steer(STEP, now);
@@ -297,17 +311,19 @@ setInterval(() => {
   }
   // A running average of what one step costs, shown on /health.
   stepCost += (Number(process.hrtime.bigint() - began) / 1e6 - stepCost) * 0.05;
-}, 50);
+  setTimeout(step, 50 * SLOW);
+})();
 
 // Topics lose a second of time every second, and one that runs out is gone.
-setInterval(() => {
+(function second() {
   let died = false;
   for (let i = portals.length - 1; i >= 0; i--) {
     portals[i].energy -= 1;
     if (portals[i].energy <= 0) { portals.splice(i, 1); died = true; }
   }
   if (died) io.emit('portals', portals.map(publicPortal));
-  else if (portals.length) io.volatile.emit('portal:energy', portals.map((p) => [p.id, p.energy]));
-}, 1000);
+  else if (portals.length) io.emit('portal:energy', portals.map((p) => [p.id, p.energy]));
+  setTimeout(second, 1000 * SLOW);
+})();
 
 server.listen(PORT, () => console.log(`Whispiverse server on http://localhost:${PORT}`));

@@ -101,7 +101,7 @@ module.exports = function createSims(world) {
   // ---- Becoming
   // What this comet should be, given where it is and what it holds. At most three hunters
   // at a time, so open sky is risky and not hopeless.
-  const started = Date.now();
+  const started = world.clock();
   function reassess(s, now) {
     const me = s.me;
     s.roleAt = now - started + 6000 + Math.random() * 8000;
@@ -294,6 +294,6 @@ module.exports = function createSims(world) {
   return {
     steer,
     // A person said something in a topic: someone there will answer shortly.
-    heard(topic) { topic.reply = { at: Date.now() + 1100 + Math.random() * 1600 }; },
+    heard(topic) { topic.reply = { at: world.clock() + 1100 + Math.random() * 1600 }; },
   };
 };

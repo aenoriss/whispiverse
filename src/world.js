@@ -495,7 +495,7 @@ export class World {
     socket.on('scattered', (e) => {
       const p = this.players.get(e.id)
       const at = new THREE.Vector3().fromArray(e.p)
-      for (let n = 0; n < 3; n++) this.burst(at.clone().add(new THREE.Vector3().randomDirection().multiplyScalar(n * 1.5)), 2 + n)
+      this.shatter(at, p ? p.colour : new THREE.Color(CREAM))
       if (p) { p.down = true; p.group.visible = false; p.tail.visible = false; p.score = 0 }
       if (e.id === this.me.id) {
         this.down = true
@@ -715,6 +715,25 @@ export class World {
     const away = at.distanceTo(this.camera.position)
     this.shake = Math.max(this.shake, mine ? 1 : Math.max(0, 1 - away / 55) * 0.7)
     if (this.shake > 0.2 && this.boostFx.buffer) { if (this.boostFx.isPlaying) this.boostFx.stop(); this.boostFx.setPlaybackRate(0.6); this.boostFx.play() }
+  }
+
+  // A comet scattered. It goes out as a flash in its own colour, a ring, and shards of that
+  // colour thrown wide, so the hit is seen and it is clear whose light just broke.
+  shatter(at, colour) {
+    const star = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.star, color: colour.clone().lerp(new THREE.Color(0xffffff), 0.5), transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }))
+    star.position.copy(at)
+    star.userData = { age: 0, size: 6, star: true }
+    this.scene.add(star)
+    this.bursts.push(star)
+    this.burst(at, 4.5)
+    for (let n = 0; n < 18; n++) {
+      const shard = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glow, color: colour, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }))
+      shard.position.copy(at)
+      shard.userData = { age: 0, v: new THREE.Vector3().randomDirection().multiplyScalar(10 + Math.random() * 16) }
+      this.scene.add(shard)
+      this.shards.push(shard)
+    }
+    this.shake = Math.max(this.shake, Math.max(0, 1 - at.distanceTo(this.camera.position) / 40) * 0.6)
   }
 
   // A taken orb streaks from where it was into the comet that took it.
