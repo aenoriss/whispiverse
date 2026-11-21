@@ -432,9 +432,9 @@ export class World {
       group.add(s)
       return s
     }
-    const halo = add(this.glow, colour, 3.2, 0.24)
-    const coma = add(this.glow, colour.clone().lerp(new THREE.Color(CREAM), 0.4), 1.2, 0.6)
-    const head = add(this.star, CREAM, 1.9, 1)
+    const halo = add(this.glow, colour, 2.4, 0.13)
+    const coma = add(this.glow, colour.clone().lerp(new THREE.Color(CREAM), 0.3), 0.8, 0.4)
+    const head = add(this.star, 0xffe9cf, 1.25, 0.8)
 
     // The tail. Light is added, so a darker colour further back is a fainter point: it thins out.
     // The points overlap heavily, so each one is kept faint: together they make a solid streak.
@@ -469,7 +469,7 @@ export class World {
     // The glow widens and warms toward gold, and the star's rays lengthen, up to 12 sparks.
     const charge = Math.min(1, p.score / 12)
     p.halo.material.color.copy(p.colour).lerp(new THREE.Color(SPARK), charge * 0.6)
-    p.coma.material.opacity = 0.6 + charge * 0.4
+    p.coma.material.opacity = 0.4 + charge * 0.3
     // Your own count is written under your comet, where you are already looking.
     if (p.isMe) {
       if (p.count) p.group.remove(p.count)
@@ -480,10 +480,10 @@ export class World {
       p.group.add(p.count)
     }
     p.shown = p.score
-    p.halo.material.opacity = 0.24 + charge * 0.36
-    p.glow = 3.2 + charge * 4.5
+    p.halo.material.opacity = 0.13 + charge * 0.25
+    p.glow = 2.4 + charge * 3.2
     p.halo.scale.setScalar(p.glow)
-    p.head.scale.setScalar(1.9 + charge * 1.6)
+    p.head.scale.setScalar(1.25 + charge * 0.9)
   }
 
   removePlayer(id) {
@@ -708,15 +708,15 @@ export class World {
       core.add(s)
       return s
     }
-    const clouds = [[0xff9a6a, 8.5, 0.34, 0.05], [0xffc28a, 6.5, 0.4, -0.08], [0xd98aa8, 10, 0.2, 0.03], [0x9a8ad8, 11.5, 0.13, -0.02]].map(([tint, size, opacity, turn], i) => {
+    const clouds = [[0xff9a6a, 8.5, 0.2, 0.05], [0xffc28a, 6.5, 0.22, -0.08], [0xd98aa8, 10, 0.13, 0.03], [0x9a8ad8, 11.5, 0.09, -0.02]].map(([tint, size, opacity, turn], i) => {
       const s = sprite(this.cloud, tint, size, opacity)
       s.material.rotation = i * 1.7 + data.id
       s.userData = { turn, opacity }
       return s
     })
-    const halo = sprite(this.glow, 0xffc9a0, 9, 0.3)
-    const heart = sprite(this.glow, CREAM, 2.4, 0.9)
-    const rays = sprite(this.star, CREAM, 7, 0.9)
+    const halo = sprite(this.glow, 0xffc9a0, 9, 0.14)
+    const heart = sprite(this.glow, 0xffe2c0, 1.5, 0.6)
+    const rays = sprite(this.star, 0xffe2c0, 4.2, 0.55)
 
     // Facing you: the topic's picture if it has one, and the ring that says how long is left.
     const face = new THREE.Group()
@@ -866,7 +866,7 @@ export class World {
       }
       // The head twinkles and turns; the sparks it holds circle it.
       p.head.material.rotation = now * 0.25 + i
-      p.coma.scale.setScalar(1.2 + Math.sin(now * 3 + i * 2.1) * 0.12)
+      p.coma.scale.setScalar(0.8 + Math.sin(now * 3 + i * 2.1) * 0.08)
       if (p.shown !== p.score) this.showSparks(p)
       if (p.bubble) {
         p.bubbleFor -= dt
@@ -895,8 +895,8 @@ export class World {
       f.userData.age += dt
       const k = f.userData.age / 0.55
       if (k >= 1) { this.scene.remove(f); this.bursts.splice(n, 1); continue }
-      f.scale.setScalar(f.userData.ring ? 1 + (1 - Math.pow(1 - k, 3)) * 8 : 2 + k * 7)
-      f.material.opacity = f.userData.ring ? (1 - k) * 0.9 : Math.pow(1 - k, 2)
+      f.scale.setScalar(f.userData.ring ? 0.6 + (1 - Math.pow(1 - k, 3)) * 2.6 : 1 + k * 2.5)
+      f.material.opacity = f.userData.ring ? (1 - k) * 0.45 : Math.pow(1 - k, 2) * 0.6
     }
 
     for (const [, p] of this.portals) {
@@ -908,10 +908,10 @@ export class World {
       p.core.scale.setScalar(PORTAL_SIZE * (0.75 + life * 0.25) * (1 + p.pulse * 0.2) * (1 + this.mapBlend * 0.8))
       p.name.visible = !this.mapMode
       p.clouds.forEach((c) => { c.material.rotation += dt * c.userData.turn; c.material.opacity = c.userData.opacity * bright })
-      p.halo.material.opacity = 0.3 * bright
+      p.halo.material.opacity = 0.14 * bright
       p.rays.material.rotation = now * 0.05 + p.data.id
-      p.rays.scale.setScalar(7 + Math.sin(now * 1.3 + p.data.id) * 0.5 + p.pulse * 4)
-      p.heart.scale.setScalar(2.4 + Math.sin(now * 2.1 + p.data.id) * 0.2)
+      p.rays.scale.setScalar(4.2 + Math.sin(now * 1.3 + p.data.id) * 0.3 + p.pulse * 3)
+      p.heart.scale.setScalar(1.5 + Math.sin(now * 2.1 + p.data.id) * 0.2)
       // The ring is redrawn only when the second changes: lit clockwise from the top for the time left.
       if (p.gaugeFor !== p.data.energy) {
         p.gaugeFor = p.data.energy
