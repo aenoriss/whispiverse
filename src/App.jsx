@@ -57,8 +57,8 @@ function sparkle(g, x, y, s) {
 
 // How long a topic has left, as a row of stars that go out one by one: nine stars, ten
 // seconds each. Under thirty seconds the ones still lit turn to embers.
-function Stars({ energy, small }) {
-  const lit = Math.min(9, Math.ceil(energy / (FULL / 9)))
+function Stars({ energy, cap = FULL, small }) {
+  const lit = Math.min(9, Math.ceil(energy / (cap / 9)))
   return (
     <span className={'stars' + (small ? ' small' : '') + (energy < LOW ? ' low' : '')} title={`${energy} seconds left`}>
       {Array.from({ length: 9 }, (_, i) => <Star key={i} className={i < lit ? 'lit' : ''} />)}
@@ -121,6 +121,9 @@ export default function App() {
   const [offline, setOffline] = useState(false)
   const [draft, setDraft] = useState('')         // what is being typed in the topic's chat
   const [here, setHere] = useState([])           // who is in the topic with you
+  const [chatOpen, setChatOpen] = useState(true) // the side panel can be slid away
+  const [given, setGiven] = useState(0)          // sparks you have spent on topics, ever
+  const [standings, setStandings] = useState([]) // who has given the most
   const [dash, setDash] = useState({ ready: 1, safe: false })
   const [hunted, setHunted] = useState([])       // names of the hunters after you
   const [down, setDown] = useState(null)         // scattered: { by, lost, until }
@@ -149,6 +152,8 @@ export default function App() {
       if (change.arrived && !change.arrived.bot) { say(`${change.arrived.name} arrived`); if (voice.current) voice.current.call(change.arrived.id, w.me.id) }
       if (change.left && voice.current) voice.current.hangUp(change.left)
       if (change.act) act()
+      if ('given' in change) setGiven(change.given)
+      if (change.grew) say(`This topic grew to level ${change.grew}. It can hold more time now.`)
       // Combat
       if (change.dashRefused) say('No dashing inside a topic. Nobody can be hit here.')
       if (change.clashed) say('Clash. You both bounced off.')
@@ -210,7 +215,7 @@ export default function App() {
     if (stage !== 'world') return
     world.current.setMapMode(mapOpen)
     if (!mapOpen) return
-    const list = () => { const snap = world.current.snapshot(); if (snap) setTopics(snap.topics.slice().sort((a, b) => a.away - b.away)) }
+    const list = () => { const snap = world.current.snapshot(); if (snap) setTopics(snap.topics.slice().sort((a, b) => a.away - b.away)); setStandings(world.current.standings()) }
     list()
     const timer = setInterval(list, 1000)
     let stop = false
@@ -245,10 +250,14 @@ export default function App() {
   useEffect(() => { if (talk.current) talk.current.scrollTop = talk.current.scrollHeight }, [said, near && near.id])
   useEffect(() => { if (near) setHere(world.current.inZone()) }, [near && near.energy])
 
+  // With the side panel out, whatever is centred on the window is centred on what is left of it.
+  const paneled = !!near && chatOpen && !form && !mapOpen
+  useEffect(() => { document.body.classList.toggle('paneled', paneled) }, [paneled])
+
   // Talking only works inside a topic. Outside one, say so and point at the nearest.
   function startTalking() {
     const s = state.current
-    if (s.near) { setMapOpen(false); setTimeout(() => whisperInput.current && whisperInput.current.focus(), 0); return }
+    if (s.near) { setMapOpen(false); setChatOpen(true); setTimeout(() => whisperInput.current && whisperInput.current.focus(), 0); return }
     const nearest = world.current.nearestTopic()
     if (!nearest) return say('Nothing to talk in yet. Collect 3 sparks and press Space to open a topic.')
     world.current.setWaypoint(nearest.id)
@@ -339,6 +348,8 @@ export default function App() {
           <header className="hud">
             <p className="brand">Whispiverse</p>
             <p className="soft">{census.count === 1 ? 'You are alone here' : `${census.count} comets here`}{census.sims > 0 && `, ${census.sims} simulated`}</p>
+            {/* The two numbers of the game: what you carry, which can be taken, and what you have given, which cannot. */}
+            <p className="purse"><span><b>{score}</b> carried</span><span><b>{given}</b> given</span></p>
           </header>
 
           {/* Where you are, and whether you can talk. Always on screen. */}
@@ -353,25 +364,32 @@ export default function App() {
             )}
           </div>
 
-          <div className="counts">
+          {/* These step aside when the side panel is out. */}
+          <div className={'counts' + (near && chatOpen && !form && !mapOpen ? ' beside' : '')}>
             <button className={'round' + (mapOpen ? ' on' : '')} onClick={() => setMapOpen(!mapOpen)}>Map</button>
             <button className={'round' + (talking ? ' on' : '')} onClick={toggleVoice}>{talking ? 'Voice on' : 'Voice off'}</button>
           </div>
 
           {/* Inside a topic: the room. What it is, how long it has, who is here, and the talk. */}
           {near && !form && !mapOpen && (
-            <aside className="chat">
+            <aside className={'chat' + (chatOpen ? '' : ' shut')}>
+              <button className="tab" type="button" onClick={() => setChatOpen(!chatOpen)} aria-label={chatOpen ? 'Hide the chat' : 'Show the chat'}>{chatOpen ? '›' : '‹'}</button>
               <header>
                 {near.image ? <img src={near.image} alt="" /> : null}
                 <p className="soft">opened by {near.owner}</p>
                 <h2>{near.name}</h2>
                 {near.description && <p className="about">{near.description}</p>}
                 <div className="fire">
-                  <p className="time"><Stars energy={near.energy} /><span><b>{near.energy}</b> s until it goes out</span></p>
+                  <p className="time"><Stars energy={near.energy} cap={near.cap} /><span><b>{near.energy}</b> s until it goes out</span></p>
                   <button className="feed" type="button" onClick={act} disabled={score < 1} title={`1 spark adds ${rules.feed} seconds`}><Star />Feed</button>
                 </div>
+                {/* What has been put into this topic, and what that has made of it. */}
+                <p className="grown">
+                  <b>Level {near.level || 1}</b>
+                  <span>{near.fed || 0} {near.fed === 1 ? 'spark' : 'sparks'} given here{(near.level || 1) < 3 ? `, ${(near.level === 2 ? 25 : 10) - (near.fed || 0)} more to grow` : ''}</span>
+                </p>
                 <ul className="here">
-                  {here.slice(0, 7).map((h) => <li key={h.id} className={h.me ? 'me' : ''}><Star className="who" style={{ color: tint(h.hue) }} />{h.me ? 'you' : h.name}{h.bot && <small>sim</small>}</li>)}
+                  {here.slice(0, 7).map((h) => <li key={h.id} className={h.me ? 'me' : ''} title={`has given ${h.given} sparks to topics`}><Star className="who" style={{ color: tint(h.hue) }} />{h.me ? 'you' : h.name}{h.bot && <small>sim</small>}{h.given > 0 && <em>{h.given}</em>}</li>)}
                   {here.length > 7 && <li>+{here.length - 7}</li>}
                 </ul>
               </header>
@@ -428,12 +446,20 @@ export default function App() {
                     <li key={t.id}>
                       <button className={'topic' + (way && way.id === t.id ? ' going' : '')} onClick={() => headTo(t)}>
                         <b>{t.name}</b>
-                        <Stars energy={t.energy} small />
+                        <Stars energy={t.energy} cap={t.cap} small />
                         <span>{t.here === 0 ? 'nobody there' : t.here === 1 ? '1 comet talking' : `${t.here} comets talking`}, {t.away} away</span>
                       </button>
                     </li>
                   ))}
                 </ul>
+                {standings.length > 0 && (
+                  <>
+                    <h2 className="minor">Given the most</h2>
+                    <ol className="standings">
+                      {standings.map((s, i) => <li key={i} className={s.me ? 'me' : ''}><Star style={{ color: tint(s.hue) }} />{s.me ? 'you' : s.name}{s.bot && <small>sim</small>}<b>{s.given}</b></li>)}
+                    </ol>
+                  </>
+                )}
                 <p className="keys">Drag to look round the sky, scroll to move in and out. Pick a topic and follow the stars to it.</p>
               </div>
             </section>

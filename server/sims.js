@@ -130,7 +130,8 @@ module.exports = function createSims(world) {
 
     // In a topic and meaning to stay: stay, and keep it alive while there.
     if (s.mode === 'linger' && s.topic && now < s.until) {
-      if (s.topic.energy < 40 && me.score > 0) feed(me, s.topic);
+      // Spend what it carries here, a spark at a time, while the topic has room for it.
+      if (me.score > 0 && s.topic.energy < 100) feed(me, s.topic);
       return;
     }
     // Being hunted with something to lose: fight or run.
@@ -217,6 +218,7 @@ module.exports = function createSims(world) {
           if (unused.length && me.score >= PORTAL_COST) {
             const t = pick(unused);
             me.score -= PORTAL_COST;
+            world.give(me, PORTAL_COST);
             const made = plantPortal(me.name, me.p, t[0], t[1]);
             made.lines = t[2];
             io.emit('score', { id: me.id, score: me.score });

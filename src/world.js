@@ -417,8 +417,16 @@ export class World {
     })
     socket.on('player:joined', (p) => { this.addPlayer(p); this.onChange({ census: this.census(), arrived: p }) })
     socket.on('player:left', (id) => { this.removePlayer(id); this.onChange({ census: this.census(), left: id }) })
+    // Positions arrive about sixteen times a second and are drawn sixty. Each arrival sets
+    // where a thing is heading from where it is now, and frames in between slide it along
+    // that line at an even rate, timed by how far apart arrivals have been lately. Chasing
+    // the newest position instead makes things lurch whenever an arrival is late.
     socket.on('tick', (t) => {
-      t.players.forEach(([id, x, y, z]) => { const p = this.players.get(id); if (p && id !== this.me.id) p.target.set(x, y, z) })
+      const now = performance.now()
+      const gap = Math.max(30, Math.min(260, now - (this.tickAt || now - 66)))
+      this.tickSpan = this.tickSpan ? this.tickSpan * 0.85 + gap * 0.15 : gap
+      this.tickAt = now
+      t.players.forEach(([id, x, y, z]) => { const p = this.players.get(id); if (p && id !== this.me.id) { p.from.copy(p.group.position); p.target.set(x, y, z) } })
       this.setSparks(t.sparks)
     })
     socket.on('spark:eaten', (e) => {
@@ -456,7 +464,21 @@ export class World {
       }
       this.onChange({ heard: { name: line.name, text: line.text, mine: this.me && line.id === this.me.id } })
     })
-    socket.on('portal:fed', (f) => { this.setEnergy(f.id, f.energy); const p = this.portals.get(f.id); if (p) p.pulse = 1 })
+    // A fed topic flares. One that has just gained a level flares harder and rings.
+    socket.on('portal:fed', (f) => {
+      const p = this.portals.get(f.id)
+      if (!p) return
+      Object.assign(p.data, { energy: f.energy, fed: f.fed, level: f.level, cap: f.cap })
+      p.pulse = f.grew ? 2 : 1
+      if (f.grew) this.burst(p.group.position, 9)
+      if (this.nearPortal && this.nearPortal.id === f.id) this.onChange({ near: { ...p.data }, grew: f.grew ? f.level : 0 })
+    })
+    // What each comet has put into topics so far. It only ever goes up.
+    socket.on('given', (g) => {
+      const p = this.players.get(g.id)
+      if (p) p.given = g.given
+      if (g.id === this.me.id) this.onChange({ given: g.given })
+    })
 
     // ---- Combat
     socket.on('dash', (e) => { const p = this.players.get(e.id); if (p && !p.isMe) this.startDash(p) })
@@ -484,6 +506,7 @@ export class World {
       if (p.isMe) { this.camera.position.add(to.clone().sub(p.group.position)); this.down = false; this.velocity.set(0, 0, 0) }
       p.group.position.copy(to)
       p.target.copy(to)
+      p.from.copy(to)
       const a = p.tail.geometry.attributes.position.array
       for (let n = 0; n < a.length; n += 3) { a[n] = to.x; a[n + 1] = to.y; a[n + 2] = to.z }
       p.down = false; p.group.visible = true; p.tail.visible = true
@@ -589,7 +612,7 @@ export class World {
     if (tag) group.add(tag)
     group.position.fromArray(p.p)
     this.scene.add(group)
-    this.players.set(p.id, { group, colour, pale, head, coma, tail, tag, tailAt: 0, target: new THREE.Vector3().fromArray(p.p), name: p.name, hue: p.hue, role: p.role || '', score: p.score || 0, shown: -1, glow: 3.2, isMe, bot: !!p.bot })
+    this.players.set(p.id, { group, colour, pale, head, coma, tail, tag, tailAt: 0, target: new THREE.Vector3().fromArray(p.p), from: new THREE.Vector3().fromArray(p.p), name: p.name, hue: p.hue, role: p.role || '', score: p.score || 0, given: p.given || 0, shown: -1, glow: 3.2, isMe, bot: !!p.bot })
     if (isMe) { this.controls.target.copy(group.position); this.camera.position.copy(group.position).add(new THREE.Vector3(0, 2, 7)) }
   }
 
@@ -608,12 +631,14 @@ export class World {
     // larger and makes it give off more of its own colour, up to 12 sparks.
     const charge = p.charge = Math.min(1, p.score / 12)
     p.size = 1 + charge * 0.5
-    // Your own count is written under your comet, where you are already looking.
-    if (p.isMe) {
-      if (p.count) p.group.remove(p.count)
+    // What a comet carries is written under it: yours large, where you are already looking,
+    // everyone else's small. It is the same number a hunter is reading off you.
+    if (p.count) { p.group.remove(p.count); p.count = null }
+    if (p.isMe || p.score > 0) {
       p.count = label('✦ ' + p.score, 64, '#ffc86b')
-      p.count.scale.set(3, 0.56, 1)
-      p.count.position.y = -2.1
+      p.countSize = p.isMe ? 3 : 2.1
+      p.count.scale.set(p.countSize, p.countSize * 0.187, 1)
+      p.count.position.y = p.isMe ? -2.1 : -1.15
       p.count.material.depthTest = false
       p.group.add(p.count)
     }
@@ -642,6 +667,7 @@ export class World {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.sparkMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }))
       s.scale.setScalar(1)
       s.userData.target = new THREE.Vector3()
+      s.userData.from = new THREE.Vector3()
       this.scene.add(s)
       this.sparks.push(s)
     }
@@ -651,6 +677,7 @@ export class World {
       const s = this.sparks[i], t = s.userData.target
       // A spark that was collected reappears far away: it jumps there, it does not streak across.
       if (t.distanceToSquared(new THREE.Vector3(p[0], p[1], p[2])) > 100) s.position.set(p[0], p[1], p[2])
+      s.userData.from.copy(s.position)
       t.set(p[0], p[1], p[2])
     })
   }
@@ -678,8 +705,9 @@ export class World {
 
   // A collected spark goes out with a flash and a ring that opens and fades where it was.
   burst(at, size = 1) {
-    const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glow, color: 0xffe2b0, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }))
-    const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.ringMap, color: SPARK, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }))
+    const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glow, color: 0xfff0d8, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }))
+    const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.ringMap, color: CREAM, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }))
+    ring.visible = size >= 1                    // a single orb taken is a small flash, no ring
     ring.userData.ring = true
     for (const s of [flash, ring]) {
       s.position.copy(at)
@@ -704,7 +732,7 @@ export class World {
       zone: this.zone,
       comets,
       topics: [...this.portals.values()].map((p) => ({
-        id: p.data.id, name: p.data.name, owner: p.data.owner, energy: p.data.energy,
+        id: p.data.id, name: p.data.name, owner: p.data.owner, energy: p.data.energy, cap: p.data.cap || FULL, level: p.data.level || 1,
         x: p.group.position.x, z: p.group.position.z,
         here: comets.filter((c) => c.at.distanceTo(p.group.position) < this.zone).length,
         away: Math.round(p.group.position.distanceTo(mine.group.position)),
@@ -767,8 +795,14 @@ export class World {
     if (!p) return []
     return [...this.players.entries()]
       .filter(([, c]) => c.group.position.distanceTo(p.group.position) < this.zone)
-      .map(([id, c]) => ({ id, name: c.name, hue: c.hue, bot: c.bot, me: c.isMe }))
+      .map(([id, c]) => ({ id, name: c.name, hue: c.hue, bot: c.bot, me: c.isMe, given: c.given || 0 }))
       .sort((a, b) => (b.me - a.me) || (a.bot - b.bot))
+  }
+
+  // Who has put the most into topics, most first.
+  standings(n = 5) {
+    return [...this.players.values()].filter((p) => p.given > 0).sort((a, b) => b.given - a.given).slice(0, n)
+      .map((p) => ({ name: p.name, hue: p.hue, bot: p.bot, me: p.isMe, given: p.given }))
   }
 
   // The topic nearest to you, for when you are in none.
@@ -875,13 +909,14 @@ export class World {
       core.add(s)
       return s
     }
-    const clouds = [[0xff9a6a, 8.5, 0.2, 0.05], [0xffc28a, 6.5, 0.22, -0.08], [0xd98aa8, 10, 0.13, 0.03], [0x9a8ad8, 11.5, 0.09, -0.02]].map(([tint, size, opacity, turn], i) => {
+    // Dusty rose, pale cream and lilac: the sky's own colours, lifted. Nothing orange.
+    const clouds = [[0xd9a0b0, 8.5, 0.15, 0.05], [0xf2dcc8, 6.5, 0.16, -0.08], [0xb89ad0, 10, 0.12, 0.03], [0x8f8fe0, 11.5, 0.09, -0.02]].map(([tint, size, opacity, turn], i) => {
       const s = sprite(this.cloud, tint, size, opacity)
       s.material.rotation = i * 1.7 + data.id
       s.userData = { turn, opacity }
       return s
     })
-    const halo = sprite(this.glow, 0xffc9a0, 8, 0.1)
+    const halo = sprite(this.glow, 0xe6cfe0, 8, 0.08)
     const heart = sprite(this.glow, 0xffe2c0, 1.2, 0.55)
     const rays = sprite(this.star, 0xffe2c0, 3.6, 0.5)
 
@@ -904,7 +939,7 @@ export class World {
     const made = { group, core, name, clouds, halo, heart, rays, face, gauge, gaugeFor: -1, data, pulse: 1 }
     if (!preview) {
       const R = this.zone
-      const shellUniforms = { tint: { value: new THREE.Color(0xffd2b0) }, strength: { value: 0.06 } }
+      const shellUniforms = { tint: { value: new THREE.Color(0xe4dcff) }, strength: { value: 0.06 } }
       const shell = new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32), new THREE.ShaderMaterial({
         uniforms: shellUniforms, vertexShader: ZONE_VERTEX, fragmentShader: ZONE_FRAGMENT,
         transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
@@ -1016,10 +1051,13 @@ export class World {
     }
 
     const speed = this.velocity.length()
+    // How far along the line from the last arrival to the newest everything is. A little
+    // past the end is allowed, so a late arrival is a glide on and not a stop.
+    const slide = this.tickAt ? Math.min(1.25, (performance.now() - this.tickAt) / this.tickSpan) : 1
     let i = 0
     for (const [id, p] of this.players) {
       i++
-      if (!p.isMe) p.group.position.lerp(p.target, Math.min(1, dt * 10))
+      if (!p.isMe) p.group.position.lerpVectors(p.from, p.target, slide)
       // From the map's distance a comet would be a speck, so it is drawn larger there.
       p.group.scale.setScalar(1 + this.mapBlend * (p.isMe ? 4 : 1.4))
       if (p.tag) p.tag.visible = !this.mapMode
@@ -1063,7 +1101,7 @@ export class World {
       p.coma.material.color.copy(p.hunting ? EMBER : p.colour)
       if (p.shown !== p.score) this.showSparks(p)
       // The count under your comet jumps when it goes up.
-      if (p.count) { p.pop = Math.max(0, (p.pop || 0) - dt * 4); const k = 1 + p.pop * 0.6; p.count.scale.set(3 * k, 0.56 * k, 1) }
+      if (p.count) { p.pop = Math.max(0, (p.pop || 0) - dt * 4); const k = p.countSize * (1 + p.pop * 0.6); p.count.scale.set(k, k * 0.187, 1); p.count.visible = !this.mapMode || p.isMe }
       if (p.bubble) {
         p.bubbleFor -= dt
         p.bubble.material.opacity = Math.min(1, p.bubbleFor)
@@ -1079,14 +1117,15 @@ export class World {
 
     this.sparks.forEach((s, n) => {
       if (!s.visible) return
-      s.position.lerp(s.userData.target, Math.min(1, dt * 8))
+      s.position.lerpVectors(s.userData.from, s.userData.target, slide)
       // Each spark twinkles on its own beat and turns slowly; one being pulled in brightens on the way.
       // It breathes: a slow swell and fade, each orb on its own beat.
+      // Small and quiet at a distance, a little brighter once it is being drawn in.
       const beat = Math.sin(now * 2.2 + n * 2.3)
-      let size = 2.3 + beat * 0.25
-      if (mine) { const away = s.position.distanceTo(mine.group.position); if (away < 18) size *= 1 + (1 - away / 18) * 0.4 }
+      let size = 1.35 + beat * 0.12, glow = 0.5 + beat * 0.1
+      if (mine) { const away = s.position.distanceTo(mine.group.position); if (away < 18) { const near = 1 - away / 18; size *= 1 + near * 0.5; glow += near * 0.4 } }
       s.scale.setScalar(size)
-      s.material.opacity = 0.85 + beat * 0.15
+      s.material.opacity = glow
     })
     for (let n = this.flyers.length - 1; n >= 0; n--) {
       const f = this.flyers[n], u = f.userData
@@ -1133,10 +1172,11 @@ export class World {
     for (const [, p] of this.portals) {
       p.face.quaternion.copy(this.camera.quaternion)
       // A topic shrinks and dims as its time runs down, and flares when it is fed.
-      const life = Math.min(1, p.data.energy / FULL)
+      const life = Math.min(1, p.data.energy / (p.data.cap || FULL))
+      const grown = 1 + ((p.data.level || 1) - 1) * 0.22            // a topic that has been fed a lot is a bigger star
       p.pulse = Math.max(0, p.pulse - dt * 1.5)
       const bright = 0.45 + life * 0.55 + p.pulse * 0.6
-      p.core.scale.setScalar(PORTAL_SIZE * (0.75 + life * 0.25) * (1 + p.pulse * 0.2) * (1 + this.mapBlend * 0.8))
+      p.core.scale.setScalar(PORTAL_SIZE * grown * (0.75 + life * 0.25) * (1 + Math.min(1, p.pulse) * 0.2) * (1 + this.mapBlend * 0.8))
       p.name.visible = !this.mapMode
       p.clouds.forEach((c) => { c.material.rotation += dt * c.userData.turn; c.material.opacity = c.userData.opacity * bright })
       p.halo.material.opacity = 0.1 * bright
@@ -1154,7 +1194,7 @@ export class World {
         // The zone you are in is the bright one.
         const inside = p === near
         // On the map the zones are the thing to read, so there they are drawn plainly.
-        p.shellUniforms.strength.value += ((this.mapMode ? 0.4 : inside ? 0.13 : 0.06) - p.shellUniforms.strength.value) * Math.min(1, dt * 3)
+        p.shellUniforms.strength.value += ((this.mapMode ? 0.4 : inside ? 0 : 0.06) - p.shellUniforms.strength.value)   // from inside it would only tint the view * Math.min(1, dt * 3)
         p.hoops.forEach((h) => { h.material.opacity = this.mapMode ? 0.7 : 0.22; h.material.size = this.mapMode ? 0.9 : 0.2 })
         p.hoops[0].rotation.y += dt * 0.06
         p.hoops[1].rotation.z += dt * 0.045

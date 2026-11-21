@@ -12,13 +12,24 @@ const { Server } = require('socket.io');
 
 const PORT = Number(process.env.PORT || 4100);
 const WORLD = 85;            // sparks and topics live within this distance of the centre
-const SPARKS = 130;
+// The economy, in one place.
+//   Sparks are found in open sky, where they can be knocked out of you. What you carry
+//   shows beside your comet, so a loaded comet is a known target.
+//   Sparks are only good for one thing: topics. Five open one, one buys an open one time.
+//   A spark spent is gone from your hand for good, and counted for good: your "given"
+//   total is what you have put into the sky's conversations, and nobody can take it.
+//   A topic grows with what it is fed. At 10 sparks and at 25 it gains a level, and a
+//   higher level can hold more time, so a room people care about gets harder to lose.
+// So the loop is: gather at risk, carry it to a topic, spend it there. Hoarding only
+// makes you a target, and hunting only pays if you then go and spend what you took.
+const SPARKS = 80;
 const EAT_RADIUS = 3.2;      // a comet this close to a spark collects it
-const MAGNET = 18;           // a spark this close to a comet is pulled toward it
-const PORTAL_COST = 3;       // sparks it takes to open a topic
-const PORTAL_ENERGY = 75;    // seconds a new topic lives without being fed
-const FEED_GAIN = 20;        // seconds one spark adds
-const PORTAL_MAX = 180;
+const MAGNET = 15;           // a spark this close to a comet is pulled toward it
+const PORTAL_COST = 5;       // sparks it takes to open a topic
+const PORTAL_ENERGY = 90;    // seconds a new topic lives without being fed
+const FEED_GAIN = 15;        // seconds one spark adds
+const LEVELS = [{ at: 0, cap: 120 }, { at: 10, cap: 200 }, { at: 25, cap: 320 }];   // sparks fed to reach a level, and the time it can then hold
+const levelOf = (fed) => LEVELS.filter((l) => fed >= l.at).length;
 const ZONE = 17;             // a topic's zone: inside this distance of its portal you can talk, and feed it
 const PORTAL_SPACING = 44;   // a new topic cannot be opened closer than this to another, so zones never touch
 // Combat. Open sky is dangerous, topics are safe: a comet that dashes into another one
@@ -53,7 +64,7 @@ const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0];
   if (url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, players: Object.keys(players).length, portals: portals.length, sparks: sparks.length }));
+    return res.end(JSON.stringify({ ok: true, players: Object.keys(players).length, portals: portals.length, sparks: sparks.length, stepMs: +stepCost.toFixed(2) }));
   }
   const file = path.join(DIST, path.normalize(url === '/' ? '/index.html' : url));
   if (!file.startsWith(DIST)) { res.writeHead(403); return res.end(); }
@@ -65,8 +76,10 @@ const server = http.createServer((req, res) => {
 });
 
 const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e6 });
-const publicPortal = (p) => ({ id: p.id, owner: p.owner, name: p.name, description: p.description, image: p.image, p: p.p, energy: p.energy, thread: p.thread || [] });
-const publicPlayer = (p) => ({ id: p.id, name: p.name, hue: p.hue, p: p.p, score: p.score, bot: !!p.bot, role: p.role || '' });
+const publicPortal = (p) => ({ id: p.id, owner: p.owner, name: p.name, description: p.description, image: p.image, p: p.p, energy: p.energy, fed: p.fed || 0, level: levelOf(p.fed || 0), cap: LEVELS[levelOf(p.fed || 0) - 1].cap, thread: p.thread || [] });
+const publicPlayer = (p) => ({ id: p.id, name: p.name, hue: p.hue, p: p.p, score: p.score, given: p.given || 0, bot: !!p.bot, role: p.role || '' });
+// A spark spent on a topic is counted to whoever spent it, for good.
+const give = (me, n) => { me.given = (me.given || 0) + n; io.emit('given', { id: me.id, given: me.given }); };
 let sims = null;
 
 // Talking happens at topics. A whisper can only be said inside a topic's zone, everyone in
@@ -87,7 +100,7 @@ function whisper(from, text) {
 }
 
 function plantPortal(owner, at, name, description, image) {
-  const portal = { id: nextPortal++, owner, name, description, image: image || '', p: at.slice(), energy: PORTAL_ENERGY, thread: [] };
+  const portal = { id: nextPortal++, owner, name, description, image: image || '', p: at.slice(), energy: PORTAL_ENERGY, fed: 0, thread: [] };
   portals.push(portal);
   io.emit('portals', portals.map(publicPortal));
   return portal;
@@ -97,8 +110,12 @@ function plantPortal(owner, at, name, description, image) {
 function feed(me, portal) {
   if (me.score < 1 || dist(portal.p, me.p) > ZONE) return false;
   me.score -= 1;
-  portal.energy = Math.min(PORTAL_MAX, portal.energy + FEED_GAIN);
-  io.emit('portal:fed', { id: portal.id, energy: portal.energy, by: me.id });
+  const was = levelOf(portal.fed);
+  portal.fed += 1;
+  const level = levelOf(portal.fed), cap = LEVELS[level - 1].cap;
+  portal.energy = Math.min(cap, portal.energy + FEED_GAIN);
+  give(me, 1);
+  io.emit('portal:fed', { id: portal.id, energy: portal.energy, fed: portal.fed, level, cap, grew: level > was, by: me.id });
   io.emit('score', { id: me.id, score: me.score });
   return true;
 }
@@ -182,6 +199,7 @@ io.on('connection', (socket) => {
     if (!name) return answer({ error: 'A topic needs a name.' });
     const image = data && typeof data.image === 'string' && data.image.startsWith('data:image/') && data.image.length < IMAGE_LIMIT * 1.4 ? data.image : '';
     me.score -= PORTAL_COST;
+    give(me, PORTAL_COST);
     const portal = plantPortal(me.name, me.p, name, clean(data.description, 240), image);
     io.emit('score', { id: me.id, score: me.score });
     answer({ ok: true, id: portal.id });
@@ -209,7 +227,7 @@ const BOTS = Number(process.env.BOTS === undefined ? 14 : process.env.BOTS);
 if (BOTS > 0) {
   sims = require('./sims')({
     count: BOTS, players, portals, sparks, io,
-    dist, somewhere, zoneOf, exposed, dash, whisper, plantPortal, feed,
+    dist, somewhere, zoneOf, exposed, dash, whisper, plantPortal, feed, give,
     rules: { ZONE, PORTAL_COST, PORTAL_SPACING, WORLD },
   });
 }
@@ -217,9 +235,15 @@ if (BOTS > 0) {
 // ---- The world's clock.
 // Sparks drift toward a point and pick a new one when they arrive. A comet that touches
 // one collects it, and the spark starts again somewhere else.
-const STEP = 1 / 15;
+// The clock asks for 20 steps a second and takes whatever the machine's timer gives it
+// (about 16 on Windows): every step moves things by the time that really passed, so the
+// world runs at the same speed either way. Every step is sent to everyone, in order.
+let lastStep = Date.now(), stepCost = 0;
 setInterval(() => {
+  const began = process.hrtime.bigint();
   const now = Date.now();
+  const STEP = Math.min(0.15, (now - lastStep) / 1000);
+  lastStep = now;
   if (sims) sims.steer(STEP, now);
   const everyone = Object.values(players);
 
@@ -266,12 +290,14 @@ setInterval(() => {
     }
   });
   if (everyone.some((p) => !p.bot)) {
-    io.volatile.emit('tick', {
+    io.emit('tick', {
       players: list.map((p) => [p.id, +p.p[0].toFixed(2), +p.p[1].toFixed(2), +p.p[2].toFixed(2)]),
-      sparks: sparks.map((s) => [+s.p[0].toFixed(2), +s.p[1].toFixed(2), +s.p[2].toFixed(2)]),
+      sparks: sparks.map((s) => [+s.p[0].toFixed(1), +s.p[1].toFixed(1), +s.p[2].toFixed(1)]),
     });
   }
-}, STEP * 1000);
+  // A running average of what one step costs, shown on /health.
+  stepCost += (Number(process.hrtime.bigint() - began) / 1e6 - stepCost) * 0.05;
+}, 50);
 
 // Topics lose a second of time every second, and one that runs out is gone.
 setInterval(() => {
