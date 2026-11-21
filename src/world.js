@@ -14,6 +14,7 @@ const FULL = 90                 // seconds of time at which a topic's rim reads 
 const TOPIC = 0xffb08a          // the colour of everything that is a topic: firelight
 const SPARK = 0xffc86b          // the colour of sparks: gold
 const CREAM = 0xfff3dc
+const EMBER = new THREE.Color(0xff5a3c)   // a hunter that is after you
 const DISPLAY = "'Grandstander', 'Nunito', sans-serif"
 const BODY = "'Nunito', sans-serif"
 
@@ -136,6 +137,65 @@ function starTexture() {
   return new THREE.CanvasTexture(c)
 }
 
+// A spark: a solid four-pointed shape with a hard edge and nothing round it. It is the one
+// thing in the sky drawn as a shape and not as a glow, so it cannot be taken for a
+// background star or for a comet.
+function sparkTexture() {
+  const c = document.createElement('canvas')
+  c.width = c.height = 128
+  const g = c.getContext('2d')
+  const shape = (s) => {
+    g.beginPath()
+    g.moveTo(64, 64 - s)
+    g.quadraticCurveTo(64 + s * 0.11, 64 - s * 0.11, 64 + s, 64)
+    g.quadraticCurveTo(64 + s * 0.11, 64 + s * 0.11, 64, 64 + s)
+    g.quadraticCurveTo(64 - s * 0.11, 64 + s * 0.11, 64 - s, 64)
+    g.quadraticCurveTo(64 - s * 0.11, 64 - s * 0.11, 64, 64 - s)
+    g.fill()
+  }
+  // Long gold points shading to white at the middle, a shorter set of points between them
+  // turned an eighth of the way round, and a small hot centre. All of it stays inside the
+  // shape: there is no glow spilling round it.
+  const body = g.createRadialGradient(64, 64, 0, 64, 64, 60)
+  body.addColorStop(0, '#ffffff')
+  body.addColorStop(0.16, '#fff3c4')
+  body.addColorStop(0.45, '#ffc54a')
+  body.addColorStop(1, '#f08a12')
+  g.fillStyle = body
+  shape(61)
+  g.save()
+  g.translate(64, 64); g.rotate(Math.PI / 4); g.translate(-64, -64)
+  const second = g.createRadialGradient(64, 64, 0, 64, 64, 30)
+  second.addColorStop(0, '#ffffff')
+  second.addColorStop(1, '#ffd978')
+  g.fillStyle = second
+  shape(30)
+  g.restore()
+  const core = g.createRadialGradient(64, 64, 0, 64, 64, 13)
+  core.addColorStop(0, 'rgba(255,255,255,1)')
+  core.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = core
+  g.fillRect(40, 40, 48, 48)
+  const tex = new THREE.CanvasTexture(c)
+  tex.anisotropy = 4
+  return tex
+}
+
+// A comet's head: a small round body of light with a soft edge, and no rays.
+function orbTexture() {
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 30)
+  grad.addColorStop(0, 'rgba(255,255,255,1)')
+  grad.addColorStop(0.55, 'rgba(255,255,255,0.95)')
+  grad.addColorStop(0.8, 'rgba(255,255,255,0.25)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = grad
+  g.fillRect(0, 0, 64, 64)
+  return new THREE.CanvasTexture(c)
+}
+
 // A thin circle, for the ring a collected spark leaves.
 function ringTexture() {
   const c = document.createElement('canvas')
@@ -228,6 +288,9 @@ export class World {
     this.keys = { forward: false, brake: false, boost: false }
     this.velocity = new THREE.Vector3()
     this.sendIn = 0
+    this.dashUntil = 0            // while this is ahead of the clock, you are mid-dash
+    this.dashReady = 0            // and you can dash again once the clock passes this
+    this.down = false             // scattered, waiting to be put back
     this.nearPortal = null
     this.voice = null             // set by voice.js when the microphone is on
     this.disposed = false
@@ -278,6 +341,8 @@ export class World {
     this.glow = glowTexture()
     this.cloud = cloudTexture()
     this.star = starTexture()
+    this.sparkMap = sparkTexture()
+    this.orb = orbTexture()
     this.ringMap = ringTexture()
 
     // Dust. The sky is a picture at infinity, so without something near the comet there is
@@ -331,6 +396,7 @@ export class World {
         this.keys.boost = down
       }
       if (e.code === 'Space' && down && !e.repeat) { e.preventDefault(); this.onChange({ act: true }) }
+      if (e.code === 'KeyF' && down && !e.repeat) this.dash()
     }
     window.addEventListener('keydown', this.onKey)
     window.addEventListener('keyup', this.onKey)
@@ -411,6 +477,77 @@ export class World {
       this.onChange({ heard: { name: line.name, text: line.text, mine: this.me && line.id === this.me.id } })
     })
     socket.on('portal:fed', (f) => { this.setEnergy(f.id, f.energy); const p = this.portals.get(f.id); if (p) p.pulse = 1 })
+
+    // ---- Combat
+    socket.on('dash', (e) => { const p = this.players.get(e.id); if (p) p.flare = 0.45 })
+    socket.on('clash', (e) => {
+      this.burst(new THREE.Vector3().fromArray(e.p), 2.2)
+      if (e.a === this.me.id || e.b === this.me.id) { this.velocity.multiplyScalar(-0.7); this.onChange({ clashed: true }) }
+    })
+    // A comet that is hit goes out with a burst, and its sparks are left where it was.
+    socket.on('scattered', (e) => {
+      const p = this.players.get(e.id)
+      const at = new THREE.Vector3().fromArray(e.p)
+      for (let n = 0; n < 3; n++) this.burst(at.clone().add(new THREE.Vector3().randomDirection().multiplyScalar(n * 1.5)), 2 + n)
+      if (p) { p.down = true; p.group.visible = false; p.tail.visible = false; p.score = 0 }
+      if (e.id === this.me.id) {
+        this.down = true
+        this.velocity.set(0, 0, 0)
+        this.onChange({ score: 0, downed: { by: e.byName, lost: e.lost, ms: this.rules.downMs } })
+      } else if (e.by === this.me.id) this.onChange({ scatteredOther: { name: e.name, lost: e.lost, streak: e.streak } })
+    })
+    // And comes back somewhere else, flickering while its shield lasts.
+    socket.on('respawn', (e) => {
+      const p = this.players.get(e.id)
+      if (!p) return
+      const to = new THREE.Vector3().fromArray(e.p)
+      if (p.isMe) { this.camera.position.add(to.clone().sub(p.group.position)); this.down = false; this.velocity.set(0, 0, 0) }
+      p.group.position.copy(to)
+      p.target.copy(to)
+      const a = p.tail.geometry.attributes.position.array
+      for (let n = 0; n < a.length; n += 3) { a[n] = to.x; a[n + 1] = to.y; a[n + 2] = to.z }
+      p.down = false; p.group.visible = true; p.tail.visible = true
+      p.shield = e.shield / 1000
+      if (p.isMe) this.onChange({ back: { shield: e.shield } })
+    })
+    // A simulated comet has become something else: its tag is rewritten.
+    socket.on('role', (e) => {
+      const p = this.players.get(e.id)
+      if (!p || p.isMe) return
+      p.role = e.role
+      if (p.tag) p.group.remove(p.tag)
+      p.tag = this.nameTag(p)
+      p.group.add(p.tag)
+    })
+    // Who a hunter is after. The one after you is drawn in ember red, here and on the radar.
+    socket.on('hunt', (e) => {
+      const p = this.players.get(e.by)
+      if (!p) return
+      const was = p.hunting
+      p.hunting = e.target === this.me.id
+      if (p.hunting !== !!was) this.onChange({ hunted: [...this.players.values()].filter((c) => c.hunting).map((c) => c.name) })
+    })
+  }
+
+  // The dash: a lunge the way you are looking. Into another comet in open sky, it scatters
+  // them. It cannot be started inside a topic, where nobody can be hit.
+  dash() {
+    const mine = this.me && this.players.get(this.me.id)
+    const now = performance.now()
+    if (!mine || this.down || this.mapMode || !this.socket) return
+    if (this.nearPortal) return this.onChange({ dashRefused: 'safe' })
+    if (now < this.dashReady) return
+    const heading = new THREE.Vector3().subVectors(mine.group.position, this.camera.position).normalize()
+    this.velocity.copy(heading.multiplyScalar(44))
+    this.dashUntil = now + this.rules.dashMs
+    this.dashReady = now + this.rules.dashEvery
+    this.socket.emit('dash')
+    if (this.boostFx.buffer) { if (this.boostFx.isPlaying) this.boostFx.stop(); this.boostFx.play() }
+  }
+  // For the dash button: how far its wait has run (1 is ready), and whether you are somewhere safe.
+  dashState() {
+    const wait = this.rules ? this.rules.dashEvery : 2500
+    return { ready: Math.max(0, Math.min(1, 1 - (this.dashReady - performance.now()) / wait)), safe: !!this.nearPortal }
   }
 
   say(text) { return new Promise((done) => this.socket.emit('whisper', text, done)) }
@@ -432,9 +569,9 @@ export class World {
       group.add(s)
       return s
     }
-    const halo = add(this.glow, colour, 2.4, 0.13)
-    const coma = add(this.glow, colour.clone().lerp(new THREE.Color(CREAM), 0.3), 0.8, 0.4)
-    const head = add(this.star, 0xffe9cf, 1.25, 0.8)
+    // No halo: the head is a round body in the comet's colour with a paler core.
+    const head = add(this.orb, colour, 0.9, 1)
+    const coma = add(this.orb, colour.clone().lerp(new THREE.Color(0xffffff), 0.75), 0.45, 1)
 
     // The tail. Light is added, so a darker colour further back is a fainter point: it thins out.
     // The points overlap heavily, so each one is kept faint: together they make a solid streak.
@@ -450,26 +587,33 @@ export class World {
     tailGeo.setAttribute('color', new THREE.BufferAttribute(shade, 3))
     const tail = new THREE.Points(tailGeo, new THREE.PointsMaterial({ map: this.glow, size: 0.85, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }))
     tail.frustumCulled = false
-    // Your own tail points pile up between you and the camera, so it is drawn much fainter.
-    if (isMe) { tail.material.opacity = 0.22; tail.material.size = 0.55 }
+    // Your own tail points pile up between you and the camera, so it is drawn a little fainter.
+    if (isMe) { tail.material.opacity = 0.7; tail.material.size = 0.6 }
     this.scene.add(tail)
 
-    let tag = null
-    // A simulated comet says so in its name tag.
-    if (!isMe) { tag = label(p.bot ? p.name + ' · sim' : p.name, 38); tag.scale.set(4, 0.75, 1); tag.position.y = 1.25; group.add(tag) }
+    const tag = isMe ? null : this.nameTag(p)
+    if (tag) group.add(tag)
     group.position.fromArray(p.p)
     this.scene.add(group)
-    this.players.set(p.id, { group, colour, head, coma, halo, tail, tag, tailAt: 0, target: new THREE.Vector3().fromArray(p.p), name: p.name, hue: p.hue, score: p.score || 0, shown: -1, glow: 3.2, isMe, bot: !!p.bot })
+    this.players.set(p.id, { group, colour, head, coma, tail, tag, tailAt: 0, target: new THREE.Vector3().fromArray(p.p), name: p.name, hue: p.hue, role: p.role || '', score: p.score || 0, shown: -1, glow: 3.2, isMe, bot: !!p.bot })
     if (isMe) { this.controls.target.copy(group.position); this.camera.position.copy(group.position).add(new THREE.Vector3(0, 2, 7)) }
+  }
+
+  // A simulated comet says so in its name tag, and says what it is being when that matters to you.
+  nameTag(p) {
+    const what = p.role === 'hunter' || p.role === 'guardian' ? ' ' + p.role : ''
+    const tag = label(p.bot ? `${p.name} · sim${what}` : p.name, 38, p.role === 'hunter' ? '#ff9a80' : '#fff3dc')
+    tag.scale.set(4, 0.75, 1)
+    tag.position.y = 1.25
+    return tag
   }
 
   // The sparks a comet holds show as how bright it is.
   showSparks(p) {
-    // Nothing is added round the comet: each spark taken in makes its own light stronger.
-    // The glow widens and warms toward gold, and the star's rays lengthen, up to 12 sparks.
+    // Nothing is added round the comet: each spark taken in makes the comet itself larger
+    // and its core hotter, up to 12 sparks.
     const charge = Math.min(1, p.score / 12)
-    p.halo.material.color.copy(p.colour).lerp(new THREE.Color(SPARK), charge * 0.6)
-    p.coma.material.opacity = 0.4 + charge * 0.3
+    p.size = 1 + charge * 0.9
     // Your own count is written under your comet, where you are already looking.
     if (p.isMe) {
       if (p.count) p.group.remove(p.count)
@@ -480,10 +624,7 @@ export class World {
       p.group.add(p.count)
     }
     p.shown = p.score
-    p.halo.material.opacity = 0.13 + charge * 0.25
-    p.glow = 2.4 + charge * 3.2
-    p.halo.scale.setScalar(p.glow)
-    p.head.scale.setScalar(1.25 + charge * 0.9)
+    p.tail.material.size = (p.isMe ? 0.6 : 0.85) * (1 + charge * 0.5)
   }
 
   removePlayer(id) {
@@ -504,8 +645,8 @@ export class World {
 
   setSparks(list) {
     while (this.sparks.length < list.length) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.star, color: SPARK, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }))
-      s.scale.setScalar(1.5)
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.sparkMap, transparent: true, depthWrite: false }))
+      s.scale.setScalar(1)
       s.userData.target = new THREE.Vector3()
       this.scene.add(s)
       this.sparks.push(s)
@@ -521,13 +662,14 @@ export class World {
   }
 
   // A collected spark goes out with a flash and a ring that opens and fades where it was.
-  burst(at) {
+  burst(at, size = 1) {
     const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glow, color: 0xffe2b0, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }))
     const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.ringMap, color: SPARK, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }))
     ring.userData.ring = true
     for (const s of [flash, ring]) {
       s.position.copy(at)
       s.userData.age = 0
+      s.userData.size = size
       this.scene.add(s)
       this.bursts.push(s)
     }
@@ -604,6 +746,16 @@ export class World {
     return { name: p.data.name, away: Math.round(p.group.position.distanceTo(mine.group.position)), at: p.group.position }
   }
 
+  // Who is in the topic you are in, yourself first.
+  inZone() {
+    const p = this.nearPortal && this.portals.get(this.nearPortal.id)
+    if (!p) return []
+    return [...this.players.entries()]
+      .filter(([, c]) => c.group.position.distanceTo(p.group.position) < this.zone)
+      .map(([id, c]) => ({ id, name: c.name, hue: c.hue, bot: c.bot, me: c.isMe }))
+      .sort((a, b) => (b.me - a.me) || (a.bot - b.bot))
+  }
+
   // The topic nearest to you, for when you are in none.
   nearestTopic() {
     const mine = this.me && this.players.get(this.me.id)
@@ -672,7 +824,7 @@ export class World {
       zone: this.zone / range,
       sparks: keep(this.sparks.filter((s) => s.userData.live).map((s) => s.position)),
       portals: keep([...this.portals.values()].map((p) => p.group.position), range + this.zone),
-      comets: keep([...this.players.values()].filter((p) => !p.isMe).map((p) => p.group.position)),
+      comets: [...this.players.values()].filter((p) => !p.isMe && !p.down).map((p) => { const at = place(p.group.position); return at && [at[0], at[1], p.hunting ? 1 : 0] }).filter(Boolean),
     }
   }
 
@@ -714,9 +866,9 @@ export class World {
       s.userData = { turn, opacity }
       return s
     })
-    const halo = sprite(this.glow, 0xffc9a0, 9, 0.14)
-    const heart = sprite(this.glow, 0xffe2c0, 1.5, 0.6)
-    const rays = sprite(this.star, 0xffe2c0, 4.2, 0.55)
+    const halo = sprite(this.glow, 0xffc9a0, 8, 0.1)
+    const heart = sprite(this.glow, 0xffe2c0, 1.2, 0.55)
+    const rays = sprite(this.star, 0xffe2c0, 3.6, 0.5)
 
     // Facing you: the topic's picture if it has one, and the ring that says how long is left.
     const face = new THREE.Group()
@@ -725,8 +877,8 @@ export class World {
       const pic = new THREE.Mesh(new THREE.CircleGeometry(1.5, 48), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false }))
       face.add(pic)
     })
-    const track = new THREE.Mesh(new THREE.RingGeometry(3.02, 3.08, 96), new THREE.MeshBasicMaterial({ color: CREAM, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }))
-    const gauge = new THREE.Mesh(new THREE.RingGeometry(2.98, 3.12, 96), new THREE.MeshBasicMaterial({ color: CREAM, transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }))
+    const track = new THREE.Mesh(new THREE.RingGeometry(3.03, 3.07, 96), new THREE.MeshBasicMaterial({ color: CREAM, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide }))
+    const gauge = new THREE.Mesh(new THREE.RingGeometry(3.01, 3.09, 96), new THREE.MeshBasicMaterial({ color: CREAM, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide }))
     face.add(track, gauge)
 
     const name = label(data.name, 44)
@@ -789,8 +941,9 @@ export class World {
       // Thrust goes where the camera looks: out from the camera through the comet. The comet
       // keeps its speed and loses it to drag, so letting go is a glide and not a stop.
       const heading = new THREE.Vector3().subVectors(mine.group.position, this.camera.position).normalize()
-      const top = this.keys.boost ? 26 : 11
-      if (this.keys.forward && !this.mapMode) this.velocity.addScaledVector(heading, (this.keys.boost ? 46 : 22) * dt)
+      const dashing = performance.now() < this.dashUntil
+      const top = dashing ? 60 : this.keys.boost ? 26 : 11
+      if (this.keys.forward && !this.mapMode && !this.down) this.velocity.addScaledVector(heading, (this.keys.boost ? 46 : 22) * dt)
       const drag = this.keys.brake ? 3.2 : this.keys.forward ? 0.9 : 1.3
       this.velocity.multiplyScalar(Math.exp(-drag * dt))
       if (this.velocity.length() > top) this.velocity.setLength(top + (this.velocity.length() - top) * Math.exp(-4 * dt))
@@ -806,7 +959,7 @@ export class World {
       this.camera.updateProjectionMatrix()
 
       this.sendIn -= dt
-      if (this.sendIn <= 0 && this.socket) { this.sendIn = SEND_EVERY; this.socket.volatile.emit('move', mine.group.position.toArray()) }
+      if (this.sendIn <= 0 && this.socket && !this.down) { this.sendIn = dashing ? SEND_EVERY / 3 : SEND_EVERY; this.socket.volatile.emit('move', mine.group.position.toArray()) }
       this.veil.position.copy(this.camera.position)
     } else {
       // Before entering, the view drifts a little so the first screen is not a still.
@@ -858,15 +1011,21 @@ export class World {
       p.tailAt -= dt
       if (p.tailAt <= 0) {
         // Your own tail is kept short: the camera sits behind you, and a long one would run through it.
-        p.tailAt = p.isMe ? 0.005 : 0.022
+        p.tailAt = p.isMe ? 0.011 : 0.022
         const a = p.tail.geometry.attributes.position.array
         a.copyWithin(3, 0, a.length - 3)
         a[0] = p.group.position.x; a[1] = p.group.position.y; a[2] = p.group.position.z
         p.tail.geometry.attributes.position.needsUpdate = true
       }
       // The head twinkles and turns; the sparks it holds circle it.
-      p.head.material.rotation = now * 0.25 + i
-      p.coma.scale.setScalar(0.8 + Math.sin(now * 3 + i * 2.1) * 0.08)
+      // A dash flares the comet, a shield makes it flicker, and a hunter after you burns red.
+      p.flare = Math.max(0, (p.flare || 0) - dt)
+      p.shield = Math.max(0, (p.shield || 0) - dt)
+      const swell = (p.size || 1) * (1 + p.flare * 2.4)
+      p.head.scale.setScalar(0.9 * swell)
+      p.coma.scale.setScalar((0.45 + Math.sin(now * 3 + i * 2.1) * 0.05) * swell)
+      p.head.material.opacity = p.shield > 0 ? 0.45 + Math.sin(now * 18) * 0.35 : 1
+      p.head.material.color.copy(p.hunting ? EMBER : p.colour)
       if (p.shown !== p.score) this.showSparks(p)
       if (p.bubble) {
         p.bubbleFor -= dt
@@ -885,17 +1044,18 @@ export class World {
       if (!s.visible) return
       s.position.lerp(s.userData.target, Math.min(1, dt * 8))
       // Each spark twinkles on its own beat and turns slowly; one being pulled in brightens on the way.
-      let size = 1.5 + Math.sin(now * 2.3 + n * 1.7) * 0.35 + Math.sin(now * 7.1 + n) * 0.1
-      if (mine) { const away = s.position.distanceTo(mine.group.position); if (away < 18) size *= 1 + (1 - away / 18) * 0.9 }
+      // A twinkle: mostly steady, with a quick swell every few seconds, each on its own beat.
+      let size = 1.9 + Math.pow(Math.max(0, Math.sin(now * 1.6 + n * 2.3)), 8) * 0.9
+      if (mine) { const away = s.position.distanceTo(mine.group.position); if (away < 18) size *= 1 + (1 - away / 18) * 0.5 }
       s.scale.setScalar(size)
-      s.material.rotation = now * 0.3 + n
+      s.material.rotation = Math.sin(now * 0.9 + n) * 0.35           // it rocks, it does not spin
     })
     for (let n = this.bursts.length - 1; n >= 0; n--) {
       const f = this.bursts[n]
       f.userData.age += dt
       const k = f.userData.age / 0.55
       if (k >= 1) { this.scene.remove(f); this.bursts.splice(n, 1); continue }
-      f.scale.setScalar(f.userData.ring ? 0.6 + (1 - Math.pow(1 - k, 3)) * 2.6 : 1 + k * 2.5)
+      f.scale.setScalar((f.userData.ring ? 0.6 + (1 - Math.pow(1 - k, 3)) * 2.6 : 1 + k * 2.5) * f.userData.size)
       f.material.opacity = f.userData.ring ? (1 - k) * 0.45 : Math.pow(1 - k, 2) * 0.6
     }
 
@@ -908,15 +1068,15 @@ export class World {
       p.core.scale.setScalar(PORTAL_SIZE * (0.75 + life * 0.25) * (1 + p.pulse * 0.2) * (1 + this.mapBlend * 0.8))
       p.name.visible = !this.mapMode
       p.clouds.forEach((c) => { c.material.rotation += dt * c.userData.turn; c.material.opacity = c.userData.opacity * bright })
-      p.halo.material.opacity = 0.14 * bright
+      p.halo.material.opacity = 0.1 * bright
       p.rays.material.rotation = now * 0.05 + p.data.id
-      p.rays.scale.setScalar(4.2 + Math.sin(now * 1.3 + p.data.id) * 0.3 + p.pulse * 3)
-      p.heart.scale.setScalar(1.5 + Math.sin(now * 2.1 + p.data.id) * 0.2)
+      p.rays.scale.setScalar(3.6 + Math.sin(now * 1.3 + p.data.id) * 0.25 + p.pulse * 3)
+      p.heart.scale.setScalar(1.2 + Math.sin(now * 2.1 + p.data.id) * 0.2)
       // The ring is redrawn only when the second changes: lit clockwise from the top for the time left.
       if (p.gaugeFor !== p.data.energy) {
         p.gaugeFor = p.data.energy
         p.gauge.geometry.dispose()
-        p.gauge.geometry = new THREE.RingGeometry(2.98, 3.12, 96, 1, Math.PI / 2, -Math.PI * 2 * Math.max(0.004, life))
+        p.gauge.geometry = new THREE.RingGeometry(3.01, 3.09, 96, 1, Math.PI / 2, -Math.PI * 2 * Math.max(0.004, life))
         p.gauge.material.color.set(p.data.energy < 30 ? 0xff8052 : CREAM)
       }
       if (p.shell) {

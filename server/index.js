@@ -1,9 +1,10 @@
 // The Whispiverse server. It owns the world: where everyone is, the sparks that drift
-// through it, who has collected what, and the topics with their draining time.
-// Clients send where they are and what they want to do. Voice never passes through here:
-// it goes peer to peer, and the server only tells clients who else is in the room.
+// through it, who has collected what, the topics with their draining time, and who has
+// scattered whom. Clients send where they are and what they want to do. Voice never passes
+// through here: it goes peer to peer, and the server only tells clients who else is in the room.
 //
 // It also serves the built client from ../dist, so one process is the whole deployment.
+// The simulated comets are in sims.js.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -13,18 +14,27 @@ const PORT = Number(process.env.PORT || 4100);
 const WORLD = 85;            // sparks and topics live within this distance of the centre
 const SPARKS = 130;
 const EAT_RADIUS = 3.2;      // a comet this close to a spark collects it
-const MAGNET = 18;          // a spark this close to a comet is pulled toward it
+const MAGNET = 18;           // a spark this close to a comet is pulled toward it
 const PORTAL_COST = 3;       // sparks it takes to open a topic
 const PORTAL_ENERGY = 75;    // seconds a new topic lives without being fed
 const FEED_GAIN = 20;        // seconds one spark adds
 const PORTAL_MAX = 180;
 const ZONE = 17;             // a topic's zone: inside this distance of its portal you can talk, and feed it
 const PORTAL_SPACING = 44;   // a new topic cannot be opened closer than this to another, so zones never touch
-const LOW = 30;              // a topic with less time than this is running out
+// Combat. Open sky is dangerous, topics are safe: a comet that dashes into another one
+// outside every zone scatters it. The one hit drops all its sparks where it was, is gone
+// for a few seconds, and comes back somewhere else with a short shield. So sparks are only
+// safe once they are spent on a topic, and carrying a lot of them makes you worth hunting.
+const DASH_MS = 450;         // how long a dash lasts
+const DASH_EVERY = 2500;     // and how often one can be made
+const HIT_RADIUS = 4.6;      // a dashing comet this close to another scatters it
+const DOWN_MS = 3000;        // time out of the sky after being scattered
+const SHIELD_MS = 4000;      // time after coming back during which nothing can hit you
+const DROP_MAX = 24;         // sparks one scatter can throw out
 const IMAGE_LIMIT = 300 * 1024;
-const THREAD_KEEPS = 8;
+const THREAD_KEEPS = 40;     // lines of talk a topic remembers
 
-const players = {};          // id -> { id, name, hue, p: [x, y, z], score, bot? }
+const players = {};          // id -> { id, name, hue, p: [x, y, z], score, bot?, role? }
 const portals = [];          // { id, owner, name, description, image, p: [x, y, z], energy, thread }
 const sparks = [];           // { p: [x, y, z], to: [x, y, z], speed }
 let nextPortal = 1;
@@ -56,6 +66,8 @@ const server = http.createServer((req, res) => {
 
 const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e6 });
 const publicPortal = (p) => ({ id: p.id, owner: p.owner, name: p.name, description: p.description, image: p.image, p: p.p, energy: p.energy, thread: p.thread || [] });
+const publicPlayer = (p) => ({ id: p.id, name: p.name, hue: p.hue, p: p.p, score: p.score, bot: !!p.bot, role: p.role || '' });
+let sims = null;
 
 // Talking happens at topics. A whisper can only be said inside a topic's zone, everyone in
 // that zone gets it, and it is kept in the topic's thread for whoever arrives later.
@@ -68,8 +80,9 @@ function whisper(from, text) {
     const listener = players[id];
     if (listener && dist(listener.p, topic.p) < ZONE) socket.emit('whisper', line);
   }
-  topic.thread = (topic.thread || []).concat({ name: from.name, text }).slice(-THREAD_KEEPS);
+  topic.thread = (topic.thread || []).concat({ id: from.id, name: from.name, hue: from.hue, bot: !!from.bot, text, t: Date.now() }).slice(-THREAD_KEEPS);
   io.emit('portal:thread', { id: topic.id, thread: topic.thread });
+  if (!from.bot && sims) sims.heard(topic, from);
   return true;
 }
 
@@ -80,27 +93,80 @@ function plantPortal(owner, at, name, description, image) {
   return portal;
 }
 
+// One spark buys a topic time. Whoever feeds has to be in its zone.
+function feed(me, portal) {
+  if (me.score < 1 || dist(portal.p, me.p) > ZONE) return false;
+  me.score -= 1;
+  portal.energy = Math.min(PORTAL_MAX, portal.energy + FEED_GAIN);
+  io.emit('portal:fed', { id: portal.id, energy: portal.energy, by: me.id });
+  io.emit('score', { id: me.id, score: me.score });
+  return true;
+}
+
+// Who can be hit right now: in the sky, not shielded, and outside every topic.
+const exposed = (p, now) => !(p.downUntil > now) && !(p.shieldUntil > now) && !zoneOf(p.p);
+
+function dash(me, now) {
+  if (me.downUntil > now || me.dashReady > now || zoneOf(me.p)) return false;
+  me.dashUntil = now + DASH_MS;
+  me.dashReady = now + (me.bot ? DASH_EVERY * 1.8 : DASH_EVERY);
+  io.emit('dash', { id: me.id });
+  return true;
+}
+
+// Scatter one comet. Its sparks are not made up: that many of the sky's own sparks are
+// moved to where it was, so the number of sparks in the world never changes.
+function scatter(victim, by, now) {
+  const lost = victim.score;
+  const at = victim.p.slice();
+  victim.score = 0;
+  victim.downUntil = now + DOWN_MS;
+  victim.dashUntil = 0;
+  by.hits = (by.hits || 0) + 1;
+  const drop = Math.min(lost, DROP_MAX);
+  const pool = sparks.map((s, i) => i).sort((a, b) => dist(sparks[b].p, at) - dist(sparks[a].p, at));   // the farthest ones are taken
+  for (let n = 0; n < drop; n++) {
+    const s = sparks[pool[n]];
+    const dir = [rand(1), rand(1), rand(1)], len = Math.hypot(dir[0], dir[1], dir[2]) || 1, r = 4 + Math.random() * 5;
+    s.p = at.map((v, k) => v + dir[k] / len * r);
+    s.to = s.p.slice();
+    s.heldUntil = now + 500;                 // a beat before anyone can take them, so the burst is seen
+  }
+  io.emit('scattered', { id: victim.id, by: by.id, byName: by.name, name: victim.name, lost, p: at, streak: by.hits });
+  io.emit('score', { id: victim.id, score: 0 });
+}
+
 io.on('connection', (socket) => {
   socket.on('join', (who) => {
     const me = { id: socket.id, name: clean(who && who.name, 18) || 'comet', hue: Math.floor(Math.random() * 360), p: [rand(6), rand(3), rand(6)], score: 0 };
     players[socket.id] = me;
-    socket.emit('welcome', { me, players: Object.values(players), portals: portals.map(publicPortal), sparks: sparks.map((s) => s.p), rules: { zone: ZONE, cost: PORTAL_COST, feed: FEED_GAIN, spacing: PORTAL_SPACING, world: WORLD } });
-    socket.broadcast.emit('player:joined', me);
+    socket.emit('welcome', {
+      me: publicPlayer(me), players: Object.values(players).map(publicPlayer), portals: portals.map(publicPortal), sparks: sparks.map((s) => s.p),
+      rules: { dashEvery: DASH_EVERY, dashMs: DASH_MS, downMs: DOWN_MS, zone: ZONE, cost: PORTAL_COST, feed: FEED_GAIN, spacing: PORTAL_SPACING, world: WORLD },
+    });
+    socket.broadcast.emit('player:joined', publicPlayer(me));
   });
 
   socket.on('move', (p) => {
     const me = players[socket.id];
     if (!me || !Array.isArray(p) || p.length !== 3 || !p.every(Number.isFinite)) return;
+    if (me.downUntil > Date.now()) return;       // a scattered comet is nowhere until it is put back
     me.p = p;
   });
 
-  // At most one whisper a second from anyone, and only inside a topic's zone.
+  socket.on('dash', (reply) => {
+    const me = players[socket.id];
+    const ok = !!me && dash(me, Date.now());
+    if (typeof reply === 'function') reply({ ok });
+  });
+
+  // At most two whispers a second from anyone, and only inside a topic's zone.
   let lastWhisper = 0;
   socket.on('whisper', (text, reply) => {
     const me = players[socket.id];
     const answer = typeof reply === 'function' ? reply : () => {};
     const line = clean(text, 140);
-    if (!me || !line || Date.now() - lastWhisper < 1000) return answer({ error: 'Too fast.' });
+    if (!me || !line || Date.now() - lastWhisper < 500) return answer({ error: 'Too fast.' });
     lastWhisper = Date.now();
     answer(whisper(me, line) ? { ok: true } : { error: 'You can only talk inside a topic.' });
   });
@@ -128,12 +194,7 @@ io.on('connection', (socket) => {
     const portal = portals.find((p) => p.id === id);
     if (!me || !portal) return answer({ error: 'No such topic.' });
     if (me.score < 1) return answer({ error: 'No sparks to feed it with.' });
-    if (dist(portal.p, me.p) > ZONE) return answer({ error: 'Too far from it.' });
-    me.score -= 1;
-    portal.energy = Math.min(PORTAL_MAX, portal.energy + FEED_GAIN);
-    io.emit('portal:fed', { id: portal.id, energy: portal.energy, by: me.id });
-    io.emit('score', { id: me.id, score: me.score });
-    answer({ ok: true });
+    answer(feed(me, portal) ? { ok: true } : { error: 'Too far from it.' });
   });
 
   socket.on('disconnect', () => {
@@ -143,95 +204,13 @@ io.on('connection', (socket) => {
   });
 });
 
-// ---- Simulated comets. An empty sky is a poor forum, so the server can fly comets of its
-// own (BOTS=n, 14 by default, 0 for none). They are marked as simulated to everyone. They
-// do what a player does, through the same rules: chase sparks, open a topic when they can
-// afford one, feed a topic that is running low, and stop at topics to talk.
+// ---- Simulated comets (BOTS=n, 14 by default, 0 for none).
 const BOTS = Number(process.env.BOTS === undefined ? 14 : process.env.BOTS);
-const BOT_NAMES = ['halley', 'encke', 'swift', 'tuttle', 'hale', 'bopp', 'lovejoy', 'wild', 'biela', 'faye', 'wolf', 'kopff', 'borrelly', 'tempel', 'holmes', 'finlay'];
-// Each topic comes with a few things a simulated comet can say in it.
-const TOPICS = [
-  ['What are you building this week?', 'Half-finished things welcome.', ['A tiny synth that runs in a tab.', 'Still arguing with my build config.', 'A map of the trees on my street.', 'Nothing yet. I came for ideas.']],
-  ['Music to work to', 'One record, and why it works for you.', ['Anything without words.', 'Rain sounds, honestly.', 'The same album since March.', 'Film scores, loud.']],
-  ['Show your worst bug', 'The longer it took to find, the better.', ['Off by one. Three days.', 'It only failed on Tuesdays.', 'A timezone, of course.', 'The cache was right. I was wrong.']],
-  ['Is the web still fun?', 'Make the case either way.', ['It is when you make small things.', 'View source used to teach you everything.', 'Yes. This is a web page.', 'Ask me after the next rewrite.']],
-  ['Small games worth an evening', 'Under two hours, no tutorials.', ['Anything with one good idea.', 'The short ones stay with you.', 'I want a list. Keep going.', 'Co-op on one keyboard.']],
-  ['Things learned the hard way', 'What you would tell yourself a year ago.', ['Write it down the day it happens.', 'Ship the small one first.', 'Sleep before you debug.', 'Ask sooner.']],
-  ['Tools you stopped using', 'And what replaced them, if anything.', ['Most of my plugins.', 'A notes app. Now it is one text file.', 'Three task managers in a row.', 'Nothing replaced it. That was the point.']],
-  ['A place you keep going back to', 'Real or not.', ['A bench by a river.', 'The level select screen of an old game.', 'A kitchen that smelled of bread.', 'A train window.']],
-];
-const FED_TALK = ['Left a spark so this one stays open.', 'Fed it. It was nearly gone.', 'This one is worth keeping.'];
-const bots = [];
-for (let i = 0; i < BOTS; i++) {
-  const id = 'sim-' + i;
-  players[id] = { id, name: BOT_NAMES[i % BOT_NAMES.length], hue: (i * 83) % 360, p: somewhere(), score: 0, bot: true };
-  bots.push({ me: players[id], aim: null, wait: 0, at: null, visit: null, turn: 0, talkIn: 3, ring: 6 + Math.random() * 7, pace: (Math.random() < 0.5 ? -1 : 1) * (0.2 + Math.random() * 0.3), speed: 7 + Math.random() * 4 });
-}
-function steerBots(dt) {
-  bots.forEach((bot) => {
-    const me = bot.me;
-    // Stopping at a topic: circle inside its zone for a while, saying something now and then.
-    if (bot.wait > 0) {
-      bot.wait -= dt;
-      const topic = bot.at && portals.includes(bot.at) ? bot.at : null;
-      if (topic) {
-        bot.talkIn -= dt;
-        if (bot.talkIn <= 0) {
-          bot.talkIn = 5 + Math.random() * 9;
-          const lines = topic.lines || FED_TALK;
-          whisper(me, lines[Math.floor(Math.random() * lines.length)]);
-        }
-        bot.turn += dt * bot.pace;
-        const goal = [topic.p[0] + Math.cos(bot.turn) * bot.ring, topic.p[1] + Math.sin(bot.turn * 0.7) * 3, topic.p[2] + Math.sin(bot.turn) * bot.ring];
-        for (let k = 0; k < 3; k++) me.p[k] += (goal[k] - me.p[k]) * Math.min(1, dt * 1.5);
-      }
-      return;
-    }
-    bot.at = null;
-    // Now and then, drop in on a topic that is open.
-    if (portals.length && !bot.visit && Math.random() < 0.012) bot.visit = portals[Math.floor(Math.random() * portals.length)];
-    if (bot.visit && !portals.includes(bot.visit)) bot.visit = null;
-    // Open a topic now and then, when it can afford one and there is room.
-    if (me.score >= PORTAL_COST && portals.length < 7 && Math.random() < 0.01 && !portals.some((p) => dist(p.p, me.p) < PORTAL_SPACING)) {
-      const unused = TOPICS.filter((t) => !portals.some((p) => p.name === t[0]));
-      if (unused.length) {
-        const topic = unused[Math.floor(Math.random() * unused.length)];
-        me.score -= PORTAL_COST;
-        const made = plantPortal(me.name, me.p, topic[0], topic[1]);
-        made.lines = topic[2];
-        io.emit('score', { id: me.id, score: me.score });
-        bot.at = made; bot.wait = 10; bot.talkIn = 2; bot.aim = null;
-        bot.turn = 0;
-        return;
-      }
-    }
-    // A topic that is running out, and sparks in hand: go and feed it.
-    const fading = me.score > 0 ? portals.filter((p) => p.energy < LOW).sort((a, b) => dist(a.p, me.p) - dist(b.p, me.p))[0] : null;
-    const stop = fading || bot.visit;
-    let goal;
-    if (stop) {
-      goal = stop.p;
-      if (dist(goal, me.p) < bot.ring + 2) {
-        if (stop === fading) {
-          me.score -= 1;
-          fading.energy = Math.min(PORTAL_MAX, fading.energy + FEED_GAIN);
-          io.emit('portal:fed', { id: fading.id, energy: fading.energy, by: me.id });
-          io.emit('score', { id: me.id, score: me.score });
-        }
-        bot.at = stop; bot.visit = null;
-        bot.turn = Math.atan2(me.p[2] - stop.p[2], me.p[0] - stop.p[0]);
-        bot.wait = 12 + Math.random() * 20;
-        bot.talkIn = 1 + Math.random() * 5;
-        if (stop === fading && Math.random() < 0.5) whisper(me, FED_TALK[Math.floor(Math.random() * FED_TALK.length)]);
-        return;
-      }
-    } else {
-      // Otherwise chase a spark nearby, keeping to one until it is caught or gone.
-      if (!bot.aim || dist(bot.aim.p, me.p) > 70) bot.aim = sparks.slice().sort((a, b) => dist(a.p, me.p) - dist(b.p, me.p))[Math.floor(Math.random() * 3)];
-      goal = bot.aim.p;
-    }
-    const d = dist(goal, me.p);
-    if (d > 0.01) for (let k = 0; k < 3; k++) me.p[k] += (goal[k] - me.p[k]) / d * Math.min(d, bot.speed * dt);
+if (BOTS > 0) {
+  sims = require('./sims')({
+    count: BOTS, players, portals, sparks, io,
+    dist, somewhere, zoneOf, exposed, dash, whisper, plantPortal, feed,
+    rules: { ZONE, PORTAL_COST, PORTAL_SPACING, WORLD },
   });
 }
 
@@ -240,9 +219,33 @@ function steerBots(dt) {
 // one collects it, and the spark starts again somewhere else.
 const STEP = 1 / 15;
 setInterval(() => {
-  steerBots(STEP);
-  const list = Object.values(players);
+  const now = Date.now();
+  if (sims) sims.steer(STEP, now);
+  const everyone = Object.values(players);
+
+  // Dashes that land. Two comets dashing into each other bounce off and nobody loses anything.
+  for (const a of everyone) {
+    if (!(a.dashUntil > now) || a.downUntil > now || zoneOf(a.p)) continue;
+    for (const b of everyone) {
+      if (b === a || !exposed(b, now) || dist(a.p, b.p) > HIT_RADIUS) continue;
+      if (b.dashUntil > now) { a.dashUntil = b.dashUntil = 0; io.emit('clash', { a: a.id, b: b.id, p: a.p }); }
+      else scatter(b, a, now);
+      break;
+    }
+  }
+  // Scattered comets come back somewhere else, shielded for a moment.
+  for (const p of everyone) {
+    if (p.downUntil && p.downUntil <= now) {
+      p.downUntil = 0;
+      p.shieldUntil = now + SHIELD_MS;
+      p.p = somewhere();
+      io.emit('respawn', { id: p.id, p: p.p, shield: SHIELD_MS });
+    }
+  }
+
+  const list = everyone.filter((p) => !(p.downUntil > now));     // only comets in the sky pull and collect
   sparks.forEach((spark, index) => {
+    if (spark.heldUntil > now) return;
     // A comet pulls the sparks around it: inside MAGNET a spark leaves its drift and falls
     // toward the nearest comet, faster the closer it is.
     let pull = null, pullD = MAGNET;
@@ -258,30 +261,17 @@ setInterval(() => {
         player.score += 1;
         spark.p = somewhere(); spark.to = somewhere();
         io.emit('spark:eaten', { index, by: player.id, score: player.score });
-        bots.forEach((b) => { if (b.aim === spark) b.aim = null; });
         break;
       }
     }
   });
-  if (list.some((p) => !p.bot)) {
+  if (everyone.some((p) => !p.bot)) {
     io.volatile.emit('tick', {
       players: list.map((p) => [p.id, +p.p[0].toFixed(2), +p.p[1].toFixed(2), +p.p[2].toFixed(2)]),
       sparks: sparks.map((s) => [+s.p[0].toFixed(2), +s.p[1].toFixed(2), +s.p[2].toFixed(2)]),
     });
   }
 }, STEP * 1000);
-
-// With simulated comets on, four topics are already open when the server starts, one of
-// them close to where a new comet arrives.
-if (BOTS > 0) {
-  const names = bots.map((b) => b.me.name);
-  // Spread through the whole volume, high and low as well as near and far.
-  [[-14, 12, -32], [54, -24, -46], [-62, 28, 20], [24, -30, 60]].forEach((at, i) => {
-    const made = plantPortal(names[i % names.length], at, TOPICS[i][0], TOPICS[i][1]);
-    made.lines = TOPICS[i][2];
-    made.energy = 120 - i * 20;
-  });
-}
 
 // Topics lose a second of time every second, and one that runs out is gone.
 setInterval(() => {

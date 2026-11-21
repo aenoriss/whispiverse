@@ -33,7 +33,16 @@ function shrink(file, max = 480) {
 
 // The four-pointed star everything here is built from.
 const STAR = 'M0-11C1.4-3.2 3.2-1.4 11 0 3.2 1.4 1.4 3.2 0 11-1.4 3.2-3.2 1.4-11 0-3.2-1.4-1.4-3.2 0-11Z'
-const Star = ({ className = '' }) => <svg className={'star ' + className} viewBox="-12 -12 24 24" aria-hidden="true"><path d={STAR} /></svg>
+const Star = ({ className = '', style }) => <svg className={'star ' + className} style={style} viewBox="-12 -12 24 24" aria-hidden="true"><path d={STAR} /></svg>
+
+// A comet's own colour, the one its glow has in the sky, light enough to read on the panel.
+const tint = (hue) => `hsl(${hue} 85% 76%)`
+
+// How long ago something was said, in a word.
+function ago(t) {
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000))
+  return s < 8 ? 'now' : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m`
+}
 
 // The same star on a canvas.
 function sparkle(g, x, y, s) {
@@ -57,17 +66,6 @@ function Stars({ energy, small }) {
   )
 }
 
-// The count of sparks, drawn the way the comet itself shows them: a star that grows and
-// glows more the more it holds.
-function Orbits({ score, cost }) {
-  return (
-    <svg className="orbits" viewBox="-40 -40 80 80" aria-hidden="true">
-      <circle r={10 + Math.min(1, score / 12) * 24} className="glow" style={{ opacity: 0.25 + Math.min(1, score / 12) * 0.5 }} />
-      <path d={STAR} className="core" transform={`scale(${1.3 + Math.min(1, score / 12) * 1.5})`} />
-    </svg>
-  )
-}
-
 // The radar: who and what is around you, with ahead at the top. Comets are cream dots, and
 // every topic is shown with its zone at true size, so you can see the edge of where you can
 // talk before you reach it. Sparks are left off: they are everywhere and come to you.
@@ -84,8 +82,9 @@ function drawRadar(c, data) {
     g.fillStyle = ROSE
     g.beginPath(); g.arc(R + x * R, R + y * R, 7, 0, Math.PI * 2); g.fill()
   })
+  // A hunter that is after you is the one red thing on the dial.
+  data.comets.forEach(([x, y, hunting]) => { g.fillStyle = hunting ? '#ff5a3c' : CREAM; g.beginPath(); g.arc(R + x * R, R + y * R, hunting ? 9 : 4.5, 0, Math.PI * 2); g.fill() })
   g.fillStyle = CREAM
-  data.comets.forEach(([x, y]) => { g.beginPath(); g.arc(R + x * R, R + y * R, 4.5, 0, Math.PI * 2); g.fill() })
   g.restore()
   if (data.guide) {
     const x = R + data.guide[0] * (R - 12), y = R + data.guide[1] * (R - 12)
@@ -120,14 +119,18 @@ export default function App() {
   const [talking, setTalking] = useState(false)
   const [note, setNote] = useState('')
   const [offline, setOffline] = useState(false)
-  const [bump, setBump] = useState(0)
-  const [lines, setLines] = useState([])         // what was said lately in your topic
-  const [draft, setDraft] = useState(null)       // null, or what is being typed
+  const [draft, setDraft] = useState('')         // what is being typed in the topic's chat
+  const [here, setHere] = useState([])           // who is in the topic with you
+  const [dash, setDash] = useState({ ready: 1, safe: false })
+  const [hunted, setHunted] = useState([])       // names of the hunters after you
+  const [down, setDown] = useState(null)         // scattered: { by, lost, until }
+  const [, tick] = useState(0)
+  const talk = useRef(null)
   const [mapOpen, setMapOpen] = useState(false)
   const [topics, setTopics] = useState([])
   const [way, setWay] = useState(null)           // the topic being flown to: { id, name, away }
 
-  state.current = { score, near, rules, form, stage, draft, mapOpen, way }
+  state.current = { score, near, rules, form, stage, draft, mapOpen, way, down }
 
   const say = (text) => { setNote(text); clearTimeout(say.timer); say.timer = setTimeout(() => setNote(''), 3200) }
 
@@ -136,23 +139,26 @@ export default function App() {
       if ('offline' in change) setOffline(change.offline)
       if (change.joined) { setStage('world'); setRules(change.rules) }
       if ('score' in change) setScore(change.score)
-      if (change.ate) setBump((n) => n + 1)
       if (change.census) setCensus(change.census)
       if ('near' in change) {
-        // Crossing a zone's edge is said out loud, both ways.
-        const was = state.current.near
-        if (change.near && (!was || was.id !== change.near.id)) say(`You are in “${change.near.name}”. You can talk here.`)
-        if (!change.near && was) { say(`You left “${was.name}”.`); setDraft(null); setLines([]) }
+        // The pill at the top says where you are; nothing else announces it.
+        if (!change.near) setDraft('')
         setNear(change.near)
+        setHere(w.inZone())
       }
       if (change.arrived && !change.arrived.bot) { say(`${change.arrived.name} arrived`); if (voice.current) voice.current.call(change.arrived.id, w.me.id) }
       if (change.left && voice.current) voice.current.hangUp(change.left)
-      if (change.heard) {
-        const line = { ...change.heard, key: Math.random() }
-        setLines((all) => all.concat(line).slice(-4))
-        setTimeout(() => setLines((all) => all.filter((l) => l !== line)), 9000)
-      }
       if (change.act) act()
+      // Combat
+      if (change.dashRefused) say('No dashing inside a topic. Nobody can be hit here.')
+      if (change.clashed) say('Clash. You both bounced off.')
+      if (change.hunted) setHunted(change.hunted)
+      if (change.downed) setDown({ ...change.downed, until: Date.now() + change.downed.ms })
+      if (change.back) { setDown(null); say(`You are back, shielded for ${change.back.shield / 1000} seconds.`) }
+      if (change.scatteredOther) {
+        const o = change.scatteredOther
+        say(o.lost ? `You scattered ${o.name}. ${o.lost} ${o.lost === 1 ? 'spark is' : 'sparks are'} loose.` : `You scattered ${o.name}. They were carrying nothing.`)
+      }
     })
     window.whispiverse = w                       // a handle for poking at the world from the console
 
@@ -161,7 +167,7 @@ export default function App() {
       const s = state.current
       if (s.stage !== 'world') return
       const typing = e.target && /INPUT|TEXTAREA/.test(e.target.tagName)
-      if (e.code === 'Escape') { setDraft(null); setMapOpen(false); setForm(null); return }
+      if (e.code === 'Escape') { if (typing) e.target.blur(); setMapOpen(false); setForm(null); return }
       if (typing) return
       if (e.code === 'Enter' && !s.form) { e.preventDefault(); startTalking() }
       if (e.code === 'KeyM' && !s.form) setMapOpen((open) => !open)
@@ -177,11 +183,15 @@ export default function App() {
     const draw = (now) => {
       if (stop) return
       requestAnimationFrame(draw)
-      if (now - last < 66 || !radar.current) return
+      if (now - last < 66) return
       last = now
+      if (!radar.current) return
       const data = world.current.radar(RADAR_RANGE)
       if (data) drawRadar(radar.current, data)
+      const d = world.current.dashState(), step = Math.round(d.ready * 20) / 20
+      setDash((was) => (was.ready === step && was.safe === d.safe ? was : { ready: step, safe: d.safe }))
       if (now - slow > 250) {
+        if (state.current.down) tick((n) => n + 1)
         slow = now
         const info = world.current.waypointInfo()
         const had = state.current.way
@@ -229,12 +239,16 @@ export default function App() {
     return () => { stop = true; clearInterval(timer) }
   }, [mapOpen, stage])
 
-  useEffect(() => { if (draft === '' && whisperInput.current) whisperInput.current.focus() }, [draft === null])
+  // The chat keeps to its newest line, and the list of who is here is refreshed as the
+  // topic's clock ticks.
+  const said = near && near.thread ? near.thread.length : 0
+  useEffect(() => { if (talk.current) talk.current.scrollTop = talk.current.scrollHeight }, [said, near && near.id])
+  useEffect(() => { if (near) setHere(world.current.inZone()) }, [near && near.energy])
 
   // Talking only works inside a topic. Outside one, say so and point at the nearest.
   function startTalking() {
     const s = state.current
-    if (s.near) { setMapOpen(false); setDraft(''); return }
+    if (s.near) { setMapOpen(false); setTimeout(() => whisperInput.current && whisperInput.current.focus(), 0); return }
     const nearest = world.current.nearestTopic()
     if (!nearest) return say('Nothing to talk in yet. Collect 3 sparks and press Space to open a topic.')
     world.current.setWaypoint(nearest.id)
@@ -265,8 +279,8 @@ export default function App() {
 
   async function sendWhisper(e) {
     e.preventDefault()
-    const text = draft && draft.trim()
-    setDraft(null)
+    const text = draft.trim()
+    setDraft('')
     if (!text) return
     const answer = await world.current.say(text)
     if (answer && answer.error) say(answer.error)
@@ -297,7 +311,8 @@ export default function App() {
     world.current.join(name.trim() || 'comet')
   }
 
-  const afford = Math.floor(score / rules.cost)
+  const thread = (near && near.thread) || []
+  const myId = world.current && world.current.me ? world.current.me.id : null
   const Key = ({ k, children }) => <span className="key"><kbd>{k}</kbd>{children}</span>
 
   return (
@@ -309,7 +324,7 @@ export default function App() {
           <div className="intro-inner">
             <p className="kicker"><Star /> a forum you fly through</p>
             <h1>Whispiverse</h1>
-            <p className="lede">You are a comet in a shared sky. Each glowing bubble is a topic someone opened, and inside it is the only place you can talk. Gather sparks, open your own, and feed the ones worth keeping. A topic nobody feeds goes out.</p>
+            <p className="lede">You are a comet in a shared sky. Each glowing bubble is a topic someone opened, and inside it is the only place you can talk. Gather sparks, open your own, and feed the ones worth keeping. A topic nobody feeds goes out. Out in the open sky other comets can dash into you and scatter what you carry, so spend it or guard it.</p>
             <label>
               <span>What should we call you?</span>
               <input value={name} onChange={(e) => setName(e.target.value)} maxLength={18} placeholder="comet" autoFocus />
@@ -329,38 +344,56 @@ export default function App() {
           {/* Where you are, and whether you can talk. Always on screen. */}
           <div className={'where' + (near ? ' in' : '')}>
             {near ? (
-              <><Star /><p><b>{near.name}</b><span>You are inside this topic. You can talk here.</span></p></>
+              <><Star /><p><b>{near.name}</b><span>You can talk here, and nothing can hit you.</span></p></>
             ) : way ? (
               <><Star /><p><b>{way.name}</b><span>{way.away} away. Follow the stars.</span></p>
                 <button className="tiny" onClick={() => { world.current.setWaypoint(null); setWay(null) }}>Stop</button></>
             ) : (
-              <p><b>Open sky</b><span>Fly into a topic's glow to talk.</span></p>
+              <p><b>Open sky</b><span>{score > 0 ? `Your ${score} ${score === 1 ? 'spark drops' : 'sparks drop'} if you are hit. Topics are safe.` : "Fly into a topic's glow to talk."}</span></p>
             )}
           </div>
 
           <div className="counts">
-            <div className="sparks">
-              <Orbits score={score} cost={rules.cost} key={bump} />
-              <p><b>{score}</b><span>{score === 1 ? 'spark' : 'sparks'}</span>
-                <em className={afford ? 'ready' : ''}>{afford ? `enough for ${afford === 1 ? 'a topic' : afford + ' topics'}` : `${rules.cost - score} more for a topic`}</em></p>
-            </div>
             <button className={'round' + (mapOpen ? ' on' : '')} onClick={() => setMapOpen(!mapOpen)}>Map</button>
             <button className={'round' + (talking ? ' on' : '')} onClick={toggleVoice}>{talking ? 'Voice on' : 'Voice off'}</button>
           </div>
 
+          {/* Inside a topic: the room. What it is, how long it has, who is here, and the talk. */}
           {near && !form && !mapOpen && (
-            <aside className="card">
-              {near.image ? <img src={near.image} alt="" /> : null}
-              <p className="soft">opened by {near.owner}</p>
-              <h2>{near.name}</h2>
-              {near.description && <p className="about">{near.description}</p>}
-              <p className="time"><Stars energy={near.energy} /><span><b>{near.energy}</b> s until it goes out</span></p>
-              {near.thread && near.thread.length > 0 && (
-                <ul className="thread">
-                  {near.thread.slice(-4).map((l, i) => <li key={i}><b>{l.name}</b>{l.text}</li>)}
+            <aside className="chat">
+              <header>
+                {near.image ? <img src={near.image} alt="" /> : null}
+                <p className="soft">opened by {near.owner}</p>
+                <h2>{near.name}</h2>
+                {near.description && <p className="about">{near.description}</p>}
+                <div className="fire">
+                  <p className="time"><Stars energy={near.energy} /><span><b>{near.energy}</b> s until it goes out</span></p>
+                  <button className="feed" type="button" onClick={act} disabled={score < 1} title={`1 spark adds ${rules.feed} seconds`}><Star />Feed</button>
+                </div>
+                <ul className="here">
+                  {here.slice(0, 7).map((h) => <li key={h.id} className={h.me ? 'me' : ''}><Star className="who" style={{ color: tint(h.hue) }} />{h.me ? 'you' : h.name}{h.bot && <small>sim</small>}</li>)}
+                  {here.length > 7 && <li>+{here.length - 7}</li>}
                 </ul>
-              )}
-              <p className="keys"><Key k="Space">feed it a spark</Key><Key k="Enter">say something</Key></p>
+              </header>
+
+              <ol className="talk" ref={talk}>
+                {thread.length === 0 && <li className="empty"><Star />Nobody has said anything here yet. Start it off.</li>}
+                {thread.map((l, i) => {
+                  const mine = l.id === myId, again = i > 0 && thread[i - 1].id === l.id
+                  return (
+                    <li key={l.t + ':' + i} className={(mine ? 'mine' : '') + (again ? ' again' : '')}>
+                      {!again && !mine && <b style={{ color: tint(l.hue) }}><Star />{l.name}{l.bot && <small>sim</small>}<time>{ago(l.t)}</time></b>}
+                      <p>{l.text}</p>
+                    </li>
+                  )
+                })}
+              </ol>
+
+              <form className="say" onSubmit={sendWhisper}>
+                <input ref={whisperInput} value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={140} placeholder="Say something here" />
+                <button className="send" aria-label="Send" disabled={!draft.trim()}><Star /></button>
+              </form>
+              <p className="soft tip"><kbd>Enter</kbd> to type, <kbd>Esc</kbd> to fly again</p>
             </aside>
           )}
 
@@ -412,18 +445,26 @@ export default function App() {
             </div>
           )}
 
-          <div className="heard">
-            {lines.map((l) => <p key={l.key} className={l.mine ? 'mine' : ''}><b>{l.name}</b>{l.text}</p>)}
-          </div>
-
-          {draft !== null && (
-            <form className="whisper" onSubmit={sendWhisper}>
-              <input ref={whisperInput} value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={140} placeholder={near ? `Say something in “${near.name}”` : ''} onBlur={() => setDraft(null)} />
-            </form>
+          {/* Combat: the dash, a warning when something is after you, and the wait after being hit. */}
+          {!mapOpen && !down && (
+            <button className={'dash' + (dash.safe ? ' safe' : dash.ready >= 1 ? ' ready' : '')} style={{ '--fill': dash.safe ? 0 : dash.ready }}
+              onClick={() => world.current.dash()} title="Dash into a comet in open sky to scatter its sparks">
+              <i><Star /></i><span>{dash.safe ? 'safe here' : 'dash'}</span><kbd>F</kbd>
+            </button>
+          )}
+          {hunted.length > 0 && !near && !down && (
+            <p className="alarm"><Star />{hunted.join(' and ')} {hunted.length > 1 ? 'are' : 'is'} after your sparks. Boost away, reach a topic, or dash first.</p>
+          )}
+          {down && (
+            <div className="downed">
+              <h2>Scattered</h2>
+              <p>{down.by} hit you{down.lost ? ` and ${down.lost} ${down.lost === 1 ? 'spark' : 'sparks'} flew loose` : ''}.</p>
+              <p className="soft">Back in {Math.max(1, Math.ceil((down.until - Date.now()) / 1000))}</p>
+            </div>
           )}
 
           <p className="keys hint">
-            <Key k="W">fly</Key><Key k="drag">steer</Key><Key k="Shift">boost</Key><Key k="S">brake</Key>
+            <Key k="W">fly</Key><Key k="drag">steer</Key><Key k="Shift">boost</Key><Key k="S">brake</Key><Key k="F">dash</Key>
             <Key k="Space">{near ? 'feed' : 'open a topic'}</Key><Key k="M">map</Key>{near && <Key k="Enter">talk</Key>}
           </p>
           {note && <p className="note"><Star />{note}</p>}
