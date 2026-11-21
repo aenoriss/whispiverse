@@ -137,51 +137,52 @@ function starTexture() {
   return new THREE.CanvasTexture(c)
 }
 
-// A spark: a solid four-pointed shape with a hard edge and nothing round it. It is the one
-// thing in the sky drawn as a shape and not as a glow, so it cannot be taken for a
-// background star or for a comet.
+// A spark is an orb of energy: a small ball of gold light, white hot in the middle, with a
+// bright skin like a soap bubble's and a short soft falloff. Round, gold and without rays,
+// where a comet is a rayed star in some other colour with a tail.
 function sparkTexture() {
   const c = document.createElement('canvas')
   c.width = c.height = 128
   const g = c.getContext('2d')
-  const shape = (s) => {
-    g.beginPath()
-    g.moveTo(64, 64 - s)
-    g.quadraticCurveTo(64 + s * 0.11, 64 - s * 0.11, 64 + s, 64)
-    g.quadraticCurveTo(64 + s * 0.11, 64 + s * 0.11, 64, 64 + s)
-    g.quadraticCurveTo(64 - s * 0.11, 64 + s * 0.11, 64 - s, 64)
-    g.quadraticCurveTo(64 - s * 0.11, 64 - s * 0.11, 64, 64 - s)
-    g.fill()
-  }
-  // Long gold points shading to white at the middle, a shorter set of points between them
-  // turned an eighth of the way round, and a small hot centre. All of it stays inside the
-  // shape: there is no glow spilling round it.
-  const body = g.createRadialGradient(64, 64, 0, 64, 64, 60)
-  body.addColorStop(0, '#ffffff')
-  body.addColorStop(0.16, '#fff3c4')
-  body.addColorStop(0.45, '#ffc54a')
-  body.addColorStop(1, '#f08a12')
+  const body = g.createRadialGradient(64, 64, 0, 64, 64, 62)
+  body.addColorStop(0, 'rgba(255,255,255,1)')
+  body.addColorStop(0.14, 'rgba(255,246,205,1)')
+  body.addColorStop(0.34, 'rgba(255,196,70,0.95)')
+  body.addColorStop(0.5, 'rgba(255,150,30,0.7)')
+  body.addColorStop(0.62, 'rgba(255,140,30,0.22)')
+  body.addColorStop(1, 'rgba(255,140,30,0)')
   g.fillStyle = body
-  shape(61)
-  g.save()
-  g.translate(64, 64); g.rotate(Math.PI / 4); g.translate(-64, -64)
-  const second = g.createRadialGradient(64, 64, 0, 64, 64, 30)
-  second.addColorStop(0, '#ffffff')
-  second.addColorStop(1, '#ffd978')
-  g.fillStyle = second
-  shape(30)
-  g.restore()
-  const core = g.createRadialGradient(64, 64, 0, 64, 64, 13)
-  core.addColorStop(0, 'rgba(255,255,255,1)')
-  core.addColorStop(1, 'rgba(255,255,255,0)')
-  g.fillStyle = core
-  g.fillRect(40, 40, 48, 48)
-  const tex = new THREE.CanvasTexture(c)
-  tex.anisotropy = 4
-  return tex
+  g.fillRect(0, 0, 128, 128)
+  // The skin, brighter on the upper left where the light would catch it.
+  g.globalCompositeOperation = 'lighter'
+  const skin = g.createLinearGradient(30, 30, 98, 98)
+  skin.addColorStop(0, 'rgba(255,240,190,0.85)')
+  skin.addColorStop(1, 'rgba(255,190,90,0.15)')
+  g.strokeStyle = skin
+  g.lineWidth = 3
+  g.beginPath(); g.arc(64, 64, 31, 0, Math.PI * 2); g.stroke()
+  return new THREE.CanvasTexture(c)
 }
 
-// A comet's head: a small round body of light with a soft edge, and no rays.
+// A comet's rays: two thin crossed lines of light fading to nothing at their ends, with no
+// glow between them.
+function raysTexture() {
+  const c = document.createElement('canvas')
+  c.width = c.height = 128
+  const g = c.getContext('2d')
+  g.globalCompositeOperation = 'lighter'
+  for (const turn of [0, Math.PI / 2]) {
+    g.save(); g.translate(64, 64); g.rotate(turn)
+    const ray = g.createLinearGradient(-62, 0, 62, 0)
+    ray.addColorStop(0, 'rgba(255,255,255,0)'); ray.addColorStop(0.5, 'rgba(255,255,255,1)'); ray.addColorStop(1, 'rgba(255,255,255,0)')
+    g.fillStyle = ray
+    g.beginPath(); g.moveTo(-62, 0); g.lineTo(0, -2.6); g.lineTo(62, 0); g.lineTo(0, 2.6); g.closePath(); g.fill()
+    g.restore()
+  }
+  return new THREE.CanvasTexture(c)
+}
+
+// A comet's body: a small round ball of light with a soft edge.
 function orbTexture() {
   const c = document.createElement('canvas')
   c.width = c.height = 64
@@ -343,6 +344,7 @@ export class World {
     this.star = starTexture()
     this.sparkMap = sparkTexture()
     this.orb = orbTexture()
+    this.rays = raysTexture()
     this.ringMap = ringTexture()
 
     // Dust. The sky is a picture at infinity, so without something near the comet there is
@@ -562,16 +564,19 @@ export class World {
     if (this.players.has(p.id)) return
     const isMe = this.me && p.id === this.me.id
     const group = new THREE.Group()
-    const colour = new THREE.Color().setHSL(p.hue / 360, 0.85, 0.72)
+    // Gold belongs to sparks, so a comet whose colour would land near it is moved along the wheel.
+    const hue = p.hue > 15 && p.hue < 75 ? p.hue + 80 : p.hue
+    const colour = new THREE.Color().setHSL(hue / 360, 0.85, 0.72)
     const add = (map, tint, size, opacity) => {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map, color: tint, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }))
       s.scale.setScalar(size)
       group.add(s)
       return s
     }
-    // No halo: the head is a round body in the comet's colour with a paler core.
-    const head = add(this.orb, colour, 0.9, 1)
-    const coma = add(this.orb, colour.clone().lerp(new THREE.Color(0xffffff), 0.75), 0.45, 1)
+    // No halo: the head is a four-rayed star in the comet's colour with a small pale body at
+    // its centre. Rays and a tail are what tell it from a spark at a glance.
+    const head = add(this.rays, colour.clone().lerp(new THREE.Color(0xffffff), 0.35), 2.6, 1)
+    const coma = add(this.orb, colour.clone().lerp(new THREE.Color(0xffffff), 0.6), 0.5, 1)
 
     // The tail. Light is added, so a darker colour further back is a fainter point: it thins out.
     // The points overlap heavily, so each one is kept faint: together they make a solid streak.
@@ -595,7 +600,7 @@ export class World {
     if (tag) group.add(tag)
     group.position.fromArray(p.p)
     this.scene.add(group)
-    this.players.set(p.id, { group, colour, head, coma, tail, tag, tailAt: 0, target: new THREE.Vector3().fromArray(p.p), name: p.name, hue: p.hue, role: p.role || '', score: p.score || 0, shown: -1, glow: 3.2, isMe, bot: !!p.bot })
+    this.players.set(p.id, { group, colour, pale: colour.clone().lerp(new THREE.Color(0xffffff), 0.45), head, coma, tail, tag, tailAt: 0, target: new THREE.Vector3().fromArray(p.p), name: p.name, hue: p.hue, role: p.role || '', score: p.score || 0, shown: -1, glow: 3.2, isMe, bot: !!p.bot })
     if (isMe) { this.controls.target.copy(group.position); this.camera.position.copy(group.position).add(new THREE.Vector3(0, 2, 7)) }
   }
 
@@ -645,7 +650,7 @@ export class World {
 
   setSparks(list) {
     while (this.sparks.length < list.length) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.sparkMap, transparent: true, depthWrite: false }))
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.sparkMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }))
       s.scale.setScalar(1)
       s.userData.target = new THREE.Vector3()
       this.scene.add(s)
@@ -1022,10 +1027,12 @@ export class World {
       p.flare = Math.max(0, (p.flare || 0) - dt)
       p.shield = Math.max(0, (p.shield || 0) - dt)
       const swell = (p.size || 1) * (1 + p.flare * 2.4)
-      p.head.scale.setScalar(0.9 * swell)
-      p.coma.scale.setScalar((0.45 + Math.sin(now * 3 + i * 2.1) * 0.05) * swell)
+      p.head.scale.setScalar(2.6 * swell)
+      p.head.material.rotation = Math.PI / 4            // rays on the diagonals, so it reads as an X and not a plus
+      p.coma.scale.setScalar((0.5 + Math.sin(now * 3 + i * 2.1) * 0.04) * swell)
       p.head.material.opacity = p.shield > 0 ? 0.45 + Math.sin(now * 18) * 0.35 : 1
-      p.head.material.color.copy(p.hunting ? EMBER : p.colour)
+      p.coma.material.color.copy(p.hunting ? EMBER : p.pale)
+      p.head.material.color.copy(p.hunting ? EMBER : p.pale)
       if (p.shown !== p.score) this.showSparks(p)
       if (p.bubble) {
         p.bubbleFor -= dt
@@ -1044,11 +1051,12 @@ export class World {
       if (!s.visible) return
       s.position.lerp(s.userData.target, Math.min(1, dt * 8))
       // Each spark twinkles on its own beat and turns slowly; one being pulled in brightens on the way.
-      // A twinkle: mostly steady, with a quick swell every few seconds, each on its own beat.
-      let size = 1.9 + Math.pow(Math.max(0, Math.sin(now * 1.6 + n * 2.3)), 8) * 0.9
-      if (mine) { const away = s.position.distanceTo(mine.group.position); if (away < 18) size *= 1 + (1 - away / 18) * 0.5 }
+      // It breathes: a slow swell and fade, each orb on its own beat.
+      const beat = Math.sin(now * 2.2 + n * 2.3)
+      let size = 2.3 + beat * 0.25
+      if (mine) { const away = s.position.distanceTo(mine.group.position); if (away < 18) size *= 1 + (1 - away / 18) * 0.4 }
       s.scale.setScalar(size)
-      s.material.rotation = Math.sin(now * 0.9 + n) * 0.35           // it rocks, it does not spin
+      s.material.opacity = 0.85 + beat * 0.15
     })
     for (let n = this.bursts.length - 1; n >= 0; n--) {
       const f = this.bursts[n]
