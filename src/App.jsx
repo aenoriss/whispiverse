@@ -333,6 +333,13 @@ export default function App() {
               <input value={name} onChange={(e) => setName(e.target.value)} maxLength={18} placeholder="comet" autoFocus />
             </label>
             <button className="big" disabled={stage === 'joining'}><Star />{stage === 'joining' ? (offline ? 'No server yet, trying again' : 'Drifting in') : 'Fly in'}</button>
+            {/* A static host can serve this page but not the sky, which lives on a Node server. Say so plainly. */}
+            {offline && (
+              <p className="offline">
+                This page is only the client. The sky runs on a small Node server, and none is answering here.
+                To fly, get <a href="https://github.com/aenoriss/whispiverse">the code</a> and run <code>npm install && npm run build && npm start</code>.
+              </p>
+            )}
           </div>
         </form>
       )}
