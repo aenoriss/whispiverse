@@ -255,6 +255,7 @@ export class World {
     this.bursts = []
     this.flyers = []              // orbs on their way into the comet that took them
     this.floaters = []            // "+1" and the like, rising and fading
+    this.wakes = []               // the puffs of light a dash leaves behind
     this.combo = 0
     this.kick = 0                 // a short push on the camera when you take an orb
     this.keys = { forward: false, brake: false, boost: false }
@@ -458,7 +459,7 @@ export class World {
     socket.on('portal:fed', (f) => { this.setEnergy(f.id, f.energy); const p = this.portals.get(f.id); if (p) p.pulse = 1 })
 
     // ---- Combat
-    socket.on('dash', (e) => { const p = this.players.get(e.id); if (p) p.flare = 0.45 })
+    socket.on('dash', (e) => { const p = this.players.get(e.id); if (p && !p.isMe) this.startDash(p) })
     socket.on('clash', (e) => {
       this.burst(new THREE.Vector3().fromArray(e.p), 2.2)
       if (e.a === this.me.id || e.b === this.me.id) { this.velocity.multiplyScalar(-0.7); this.onChange({ clashed: true }) }
@@ -521,8 +522,19 @@ export class World {
     this.dashUntil = now + this.rules.dashMs
     this.dashReady = now + this.rules.dashEvery
     this.socket.emit('dash')
+    this.startDash(mine)
+    this.kick = 1
     if (this.boostFx.buffer) { if (this.boostFx.isPlaying) this.boostFx.stop(); this.boostFx.play() }
   }
+  // A dash has to be seen, by whoever does it and by whoever it is aimed at: the comet
+  // flares, a ring snaps open where it started, and for as long as it lasts it leaves a
+  // wide wake of its own colour that hangs in the sky for a second after.
+  startDash(p) {
+    p.flare = 0.5
+    p.wake = 0.55
+    this.burst(p.group.position, p.isMe ? 1.2 : 2.6)
+  }
+
   // For the dash button: how far its wait has run (1 is ready), and whether you are somewhere safe.
   dashState() {
     const wait = this.rules ? this.rules.dashEvery : 2500
@@ -1025,7 +1037,23 @@ export class World {
       // turns red, and the sparks it holds make it larger and its own colour stronger.
       p.flare = Math.max(0, (p.flare || 0) - dt)
       p.shield = Math.max(0, (p.shield || 0) - dt)
-      const swell = (p.size || 1) * (1 + p.flare * 1.6)
+      // The wake: while dashing, a fat puff of light is left every frame along the way it went.
+      if (p.wake > 0 && !p.down) {
+        p.wake -= dt
+        const last = p.wakeAt || p.group.position
+        const gap = last.distanceTo(p.group.position)
+        const puffs = Math.max(1, Math.min(6, Math.ceil(gap / 0.9)))            // no holes at dash speed
+        for (let n = 1; n <= puffs; n++) {
+          const puff = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glow, color: p.colour, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending }))
+          puff.position.lerpVectors(last, p.group.position, n / puffs)
+          puff.userData.age = 0
+          puff.userData.thin = p.isMe            // your own is seen end on, from inside it
+          this.scene.add(puff)
+          this.wakes.push(puff)
+        }
+        p.wakeAt = p.group.position.clone()
+      } else p.wakeAt = null
+      const swell = (p.size || 1) * (1 + p.flare * 2.2)
       p.head.scale.setScalar(1.7 * swell)
       p.head.material.rotation = now * 0.25 + i                      // the rays turn slowly
       p.coma.scale.setScalar((1.1 + Math.sin(now * 3 + i * 2.1) * 0.08) * swell)
@@ -1071,6 +1099,19 @@ export class World {
         this.burst(u.to.group.position, 0.7)
         u.to.flare = Math.max(u.to.flare || 0, 0.14)
       }
+    }
+    // A wake starts wide and bright, swells a little more, and thins out over a second.
+    for (let n = this.wakes.length - 1; n >= 0; n--) {
+      const f = this.wakes[n]
+      f.userData.age += dt
+      const k = f.userData.age / 1.1
+      if (k >= 1) { this.scene.remove(f); f.material.dispose(); this.wakes.splice(n, 1); continue }
+      // Another comet's wake is wide. Your own runs back through the camera, so it is kept
+      // narrow and faint, and the part right at the lens is not drawn at all.
+      const thin = f.userData.thin
+      f.scale.setScalar(thin ? 1.1 + k * 0.9 : 3.2 + k * 2.2)
+      f.material.opacity = Math.pow(1 - k, 1.6) * (thin ? 0.3 : 0.9)
+      f.visible = !thin || f.position.distanceTo(this.camera.position) > 4.5
     }
     for (let n = this.floaters.length - 1; n >= 0; n--) {
       const f = this.floaters[n]
