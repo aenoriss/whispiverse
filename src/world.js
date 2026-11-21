@@ -256,6 +256,9 @@ export class World {
     this.flyers = []              // orbs on their way into the comet that took them
     this.floaters = []            // "+1" and the like, rising and fading
     this.wakes = []               // the puffs of light a dash leaves behind
+    this.shards = []              // what flies out of a clash
+    this.shake = 0                // how hard the view is shaking, 0 to 1
+    this.shakeBy = new THREE.Vector3()
     this.combo = 0
     this.kick = 0                 // a short push on the camera when you take an orb
     this.keys = { forward: false, brake: false, boost: false }
@@ -483,8 +486,10 @@ export class World {
     // ---- Combat
     socket.on('dash', (e) => { const p = this.players.get(e.id); if (p && !p.isMe) this.startDash(p) })
     socket.on('clash', (e) => {
-      this.burst(new THREE.Vector3().fromArray(e.p), 2.2)
-      if (e.a === this.me.id || e.b === this.me.id) { this.velocity.multiplyScalar(-0.7); this.onChange({ clashed: true }) }
+      const mine = e.a === this.me.id || e.b === this.me.id
+      this.clash(new THREE.Vector3().fromArray(e.p), mine)
+      for (const id of [e.a, e.b]) { const p = this.players.get(id); if (p) { p.flare = 0.6; p.wake = 0 } }
+      if (mine) { this.velocity.multiplyScalar(-0.9); this.onChange({ clashed: true }) }
     })
     // A comet that is hit goes out with a burst, and its sparks are left where it was.
     socket.on('scattered', (e) => {
@@ -680,6 +685,36 @@ export class World {
       s.userData.from.copy(s.position)
       t.set(p[0], p[1], p[2])
     })
+  }
+
+  // Two dashes meeting. It has to read from across the sky: a white star that blows up and
+  // is gone, two rings opening one after the other, shards thrown out in every direction,
+  // the word itself, and a shake of the view for anyone close.
+  clash(at, mine) {
+    const star = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.star, color: 0xffffff, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }))
+    star.position.copy(at)
+    star.userData = { age: 0, size: 9, star: true }
+    this.scene.add(star)
+    this.bursts.push(star)
+    this.burst(at, 5)
+    setTimeout(() => { if (!this.disposed) this.burst(at, 9) }, 110)
+    for (let n = 0; n < 22; n++) {
+      const shard = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glow, color: n % 3 ? 0xfff3dc : 0xffc86b, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }))
+      shard.position.copy(at)
+      shard.userData = { age: 0, v: new THREE.Vector3().randomDirection().multiplyScalar(14 + Math.random() * 20) }
+      this.scene.add(shard)
+      this.shards.push(shard)
+    }
+    const word = label('clash!', 76, '#fff3dc')
+    word.scale.set(7, 1.31, 1)
+    word.material.depthTest = false
+    word.position.copy(at).add(new THREE.Vector3(0, 2.4, 0))
+    word.userData.age = -0.3                       // it holds a moment before it starts to fade
+    this.scene.add(word)
+    this.floaters.push(word)
+    const away = at.distanceTo(this.camera.position)
+    this.shake = Math.max(this.shake, mine ? 1 : Math.max(0, 1 - away / 55) * 0.7)
+    if (this.shake > 0.2 && this.boostFx.buffer) { if (this.boostFx.isPlaying) this.boostFx.stop(); this.boostFx.setPlaybackRate(0.6); this.boostFx.play() }
   }
 
   // A taken orb streaks from where it was into the comet that took it.
@@ -1155,9 +1190,20 @@ export class World {
     for (let n = this.floaters.length - 1; n >= 0; n--) {
       const f = this.floaters[n]
       f.userData.age += dt
-      const k = f.userData.age / 0.8
+      const k = Math.max(0, f.userData.age) / 0.8
       if (k >= 1) { this.scene.remove(f); this.floaters.splice(n, 1); continue }
       f.position.y += dt * 2.2
+      f.material.opacity = 1 - k * k
+    }
+    // Shards fly out fast, slow as if through something thick, and go out.
+    for (let n = this.shards.length - 1; n >= 0; n--) {
+      const f = this.shards[n], u = f.userData
+      u.age += dt
+      const k = u.age / 0.7
+      if (k >= 1) { this.scene.remove(f); f.material.dispose(); this.shards.splice(n, 1); continue }
+      u.v.multiplyScalar(Math.exp(-3.5 * dt))
+      f.position.addScaledVector(u.v, dt)
+      f.scale.setScalar(1.1 * (1 - k * 0.6))
       f.material.opacity = 1 - k * k
     }
     for (let n = this.bursts.length - 1; n >= 0; n--) {
@@ -1166,7 +1212,8 @@ export class World {
       const k = f.userData.age / 0.55
       if (k >= 1) { this.scene.remove(f); this.bursts.splice(n, 1); continue }
       f.scale.setScalar((f.userData.ring ? 0.6 + (1 - Math.pow(1 - k, 3)) * 2.6 : 1 + k * 2.5) * f.userData.size)
-      f.material.opacity = f.userData.ring ? (1 - k) * 0.45 : Math.pow(1 - k, 2) * 0.6
+      f.material.opacity = f.userData.star ? Math.pow(1 - k, 1.5) : f.userData.ring ? (1 - k) * 0.45 : Math.pow(1 - k, 2) * 0.6
+      if (f.userData.star) f.material.rotation = k * 0.6
     }
 
     for (const [, p] of this.portals) {
@@ -1233,7 +1280,13 @@ export class World {
       this.streaks.geometry.attributes.position.needsUpdate = true
     }
 
+    // The shake is laid over the camera for the frame and taken off again after it is drawn,
+    // so it never becomes part of where the camera is.
+    this.shake = Math.max(0, this.shake - dt * 2.4)
+    this.shakeBy.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(this.shake * this.shake * 0.9)
+    this.camera.position.add(this.shakeBy)
     this.renderer.render(this.scene, this.camera)
+    this.camera.position.sub(this.shakeBy)
   }
 
   dispose() {
