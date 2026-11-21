@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { World } from './world.js'
 import { Voice } from './voice.js'
+import Chat from './Chat.jsx'
 
 // The panels around the world: the way in, the sparks you hold, which topic you are in,
 // a topic's card, the form for opening one, the map, and what is being said. The world
@@ -37,12 +38,6 @@ const Star = ({ className = '', style }) => <svg className={'star ' + className}
 
 // A comet's own colour, the one its glow has in the sky, light enough to read on the panel.
 const tint = (hue) => `hsl(${hue} 85% 76%)`
-
-// How long ago something was said, in a word.
-function ago(t) {
-  const s = Math.max(0, Math.round((Date.now() - t) / 1000))
-  return s < 8 ? 'now' : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m`
-}
 
 // The same star on a canvas.
 function sparkle(g, x, y, s) {
@@ -320,7 +315,6 @@ export default function App() {
     world.current.join(name.trim() || 'comet')
   }
 
-  const thread = (near && near.thread) || []
   const myId = world.current && world.current.me ? world.current.me.id : null
   const Key = ({ k, children }) => <span className="key"><kbd>{k}</kbd>{children}</span>
 
@@ -372,47 +366,8 @@ export default function App() {
 
           {/* Inside a topic: the room. What it is, how long it has, who is here, and the talk. */}
           {near && !form && !mapOpen && (
-            <aside className={'chat' + (chatOpen ? '' : ' shut')}>
-              <button className="tab" type="button" onClick={() => setChatOpen(!chatOpen)} aria-label={chatOpen ? 'Hide the chat' : 'Show the chat'}>{chatOpen ? '›' : '‹'}</button>
-              <header>
-                {near.image ? <img src={near.image} alt="" /> : null}
-                <p className="soft">opened by {near.owner}</p>
-                <h2>{near.name}</h2>
-                {near.description && <p className="about">{near.description}</p>}
-                <div className="fire">
-                  <p className="time"><Stars energy={near.energy} cap={near.cap} /><span><b>{near.energy}</b> s until it goes out</span></p>
-                  <button className="feed" type="button" onClick={act} disabled={score < 1} title={`1 spark adds ${rules.feed} seconds`}><Star />Feed</button>
-                </div>
-                {/* What has been put into this topic, and what that has made of it. */}
-                <p className="grown">
-                  <b>Level {near.level || 1}</b>
-                  <span>{near.fed || 0} {near.fed === 1 ? 'spark' : 'sparks'} given here{(near.level || 1) < 3 ? `, ${(near.level === 2 ? 25 : 10) - (near.fed || 0)} more to grow` : ''}</span>
-                </p>
-                <ul className="here">
-                  {here.slice(0, 7).map((h) => <li key={h.id} className={h.me ? 'me' : ''} title={`has given ${h.given} sparks to topics`}><Star className="who" style={{ color: tint(h.hue) }} />{h.me ? 'you' : h.name}{h.bot && <small>sim</small>}{h.given > 0 && <em>{h.given}</em>}</li>)}
-                  {here.length > 7 && <li>+{here.length - 7}</li>}
-                </ul>
-              </header>
-
-              <ol className="talk" ref={talk}>
-                {thread.length === 0 && <li className="empty"><Star />Nobody has said anything here yet. Start it off.</li>}
-                {thread.map((l, i) => {
-                  const mine = l.id === myId, again = i > 0 && thread[i - 1].id === l.id
-                  return (
-                    <li key={l.t + ':' + i} className={(mine ? 'mine' : '') + (again ? ' again' : '')}>
-                      {!again && !mine && <b style={{ color: tint(l.hue) }}><Star />{l.name}{l.bot && <small>sim</small>}<time>{ago(l.t)}</time></b>}
-                      <p>{l.text}</p>
-                    </li>
-                  )
-                })}
-              </ol>
-
-              <form className="say" onSubmit={sendWhisper}>
-                <input ref={whisperInput} value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={140} placeholder="Say something here" />
-                <button className="send" aria-label="Send" disabled={!draft.trim()}><Star /></button>
-              </form>
-              <p className="soft tip"><kbd>Enter</kbd> to type, <kbd>Esc</kbd> to fly again</p>
-            </aside>
+            <Chat topic={near} here={here} myId={myId} score={score} rules={rules} draft={draft} setDraft={setDraft}
+              onSend={sendWhisper} onFeed={act} open={chatOpen} setOpen={setChatOpen} inputRef={whisperInput} talkRef={talk} />
           )}
 
           {form && (

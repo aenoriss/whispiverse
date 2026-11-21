@@ -1,0 +1,447 @@
+/* The topic's room. A pane of dark glass on the right edge: the sky shows through it,
+   blurred, so the room feels like part of the place and not a window laid over it. */
+
+.room {
+  --wide: min(350px, 92vw);
+  position: fixed;
+  top: 12px;
+  right: 0;
+  bottom: 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  width: var(--wide);
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 243, 220, 0.13);
+  border-right: 0;
+  border-radius: 30px 0 0 30px;
+  background: linear-gradient(180deg, rgba(52, 30, 60, 0.62), rgba(24, 14, 34, 0.74));
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  backdrop-filter: blur(18px) saturate(1.25);
+  box-shadow: -18px 0 60px rgba(14, 8, 22, 0.45);
+  transition: transform 0.4s cubic-bezier(0.3, 1.15, 0.5, 1);
+  animation: room-in 0.45s cubic-bezier(0.3, 1.15, 0.5, 1);
+}
+
+.room.shut {
+  transform: translateX(100%);
+}
+
+@keyframes room-in {
+  from { transform: translateX(100%); }
+}
+
+.room .star {
+  width: 1em;
+  height: 1em;
+  flex: none;
+  fill: currentColor;
+}
+
+/* The tab on its outer edge. Away, it shows a star and how much has been said. */
+.room-tab {
+  position: absolute;
+  top: 50%;
+  left: -33px;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  width: 32px;
+  min-height: 68px;
+  padding: 8px 0;
+  border: 1px solid rgba(255, 243, 220, 0.13);
+  border-right: 0;
+  border-radius: 16px 0 0 16px;
+  background: rgba(40, 23, 50, 0.8);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  color: var(--cream);
+  font: 700 1.15rem var(--display);
+  transform: translateY(-50%);
+}
+
+.room-tab:hover:not(:disabled),
+.room-tab:active:not(:disabled) {
+  transform: translateY(-50%) translateX(-3px);
+}
+
+.room-tab .star { color: var(--rose); font-size: 1rem; }
+.room-tab b { font: 800 0.7rem var(--body); color: var(--gold); }
+
+/* ---- The top: what this is */
+
+.room-head {
+  display: grid;
+  gap: 12px;
+  padding: 20px 20px 14px;
+}
+
+.room-title {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 13px;
+  align-items: start;
+}
+
+.room-title h2 {
+  font-size: 1.28rem;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.room-title p {
+  margin-top: 3px;
+  font-size: 0.86rem;
+  line-height: 1.4;
+  color: var(--cream-soft);
+}
+
+/* The emblem: the topic's star in a soft disc, bigger and brighter at each level. */
+.emblem {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 176, 138, 0.55), rgba(255, 176, 138, 0.08) 68%);
+  color: var(--cream);
+  font-size: 1.25rem;
+  animation: breathe 3.6s ease-in-out infinite;
+}
+
+.emblem.l2 { font-size: 1.5rem; box-shadow: 0 0 0 2px rgba(255, 176, 138, 0.35); }
+.emblem.l3 { font-size: 1.7rem; box-shadow: 0 0 0 2px rgba(255, 176, 138, 0.5), 0 0 0 6px rgba(255, 176, 138, 0.16); }
+
+@keyframes breathe {
+  50% { transform: scale(1.08); filter: brightness(1.2); }
+}
+
+.room-head img {
+  width: 100%;
+  max-height: 96px;
+  border-radius: 18px;
+  object-fit: cover;
+}
+
+/* The wick, the time, the button. One row. */
+.room-life {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.wick {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 243, 220, 0.12);
+  overflow: hidden;
+}
+
+.wick i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--rose), var(--gold));
+  box-shadow: 0 0 12px rgba(255, 200, 107, 0.7);
+  transition: width 1s linear;
+}
+
+.room-life time {
+  min-width: 2.6em;
+  font: 700 1rem var(--display);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.room-life.low .wick i { background: var(--ember); box-shadow: 0 0 12px rgba(255, 128, 82, 0.8); animation: gutter 0.8s ease-in-out infinite; }
+.room-life.low time { color: var(--ember); }
+
+@keyframes gutter {
+  50% { opacity: 0.5; }
+}
+
+.room-feed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px 7px 10px;
+  background: var(--gold);
+  color: var(--night);
+  font: 700 0.86rem var(--display);
+  box-shadow: 0 3px 0 #c98f3a;
+}
+
+.room-feed:disabled {
+  background: rgba(255, 243, 220, 0.1);
+  color: rgba(255, 243, 220, 0.5);
+  box-shadow: none;
+  cursor: default;
+}
+
+.room-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 0.76rem;
+  color: var(--cream-soft);
+}
+
+.room-meta b {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(255, 176, 138, 0.22);
+  color: var(--rose);
+  font: 700 0.74rem var(--display);
+}
+
+.room-meta span {
+  margin-left: auto;
+  opacity: 0.75;
+}
+
+/* Who is here: their faces, overlapping, and a few words. */
+.room-people {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 243, 220, 0.1);
+  font-size: 0.8rem;
+  color: var(--cream-soft);
+}
+
+.faces {
+  display: flex;
+  padding-left: 6px;
+}
+
+.face {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-left: -6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px #2a1830;
+  color: #2a1830;
+  font: 800 0.72rem var(--body);
+  font-style: normal;
+}
+
+.face.me { box-shadow: 0 0 0 2px var(--gold); }
+.face.more { background: rgba(255, 243, 220, 0.16); color: var(--cream); font-size: 0.62rem; }
+.face.none { visibility: hidden; }
+
+/* ---- The talk */
+
+.room-talk {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 16px 14px;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 26px);
+  mask-image: linear-gradient(180deg, transparent, #000 26px);
+}
+
+.room-talk::-webkit-scrollbar { display: none; }
+
+/* Everything sits at the bottom until there is enough to fill the pane. */
+.room-talk > :first-child { margin-top: auto; }
+
+.msg {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px;
+  align-items: end;
+  margin-top: 2px;
+  animation: msg-in 0.32s cubic-bezier(0.3, 1.3, 0.5, 1);
+}
+
+.msg.first { margin-top: 12px; }
+.msg .face { margin-left: 0; box-shadow: none; align-self: start; margin-top: 18px; }
+
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+}
+
+.msg b {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 3px 4px;
+  font: 700 0.8rem var(--display);
+}
+
+.msg small {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255, 243, 220, 0.12);
+  color: var(--cream-soft);
+  font: 700 0.6rem var(--body);
+}
+
+.msg time {
+  font: 600 0.66rem var(--body);
+  color: rgba(255, 243, 220, 0.4);
+}
+
+/* A run of lines from one comet reads as one thing: square where they join. */
+.msg p {
+  display: inline-block;
+  max-width: 100%;
+  padding: 8px 13px;
+  border-radius: 6px 18px 18px 6px;
+  background: rgba(255, 243, 220, 0.09);
+  font-size: 0.92rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.msg.first p { border-top-left-radius: 18px; }
+.msg.last p { border-bottom-left-radius: 18px; }
+
+.msg.mine {
+  grid-template-columns: 1fr;
+  justify-items: end;
+  padding-left: 44px;
+}
+
+.msg.mine p {
+  border-radius: 18px 6px 6px 18px;
+  background: linear-gradient(135deg, rgba(255, 200, 107, 0.34), rgba(255, 176, 138, 0.3));
+  box-shadow: inset 0 0 0 1px rgba(255, 200, 107, 0.4);
+}
+
+.msg.mine.first p { border-top-right-radius: 18px; }
+.msg.mine.last p { border-bottom-right-radius: 18px; }
+
+.room-talk .quiet {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin: auto 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--cream-soft);
+}
+
+.room-talk .quiet .star {
+  font-size: 1.6rem;
+  color: var(--rose);
+  animation: breathe 3.6s ease-in-out infinite;
+}
+
+/* ---- The place to type: one pill, with the button inside it */
+
+.room-say {
+  position: relative;
+  margin: 0 14px 10px;
+}
+
+.room-say input {
+  padding: 13px 54px 13px 18px;
+  border: 1px solid rgba(255, 243, 220, 0.16);
+  border-radius: 999px;
+  background: rgba(14, 8, 22, 0.5);
+  font-size: 0.95rem;
+}
+
+.room-say input:focus {
+  border-color: var(--gold);
+  background: rgba(14, 8, 22, 0.7);
+}
+
+.room-say button {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  background: var(--gold);
+  color: var(--night);
+  font-size: 1.15rem;
+  transform: translateY(-50%);
+}
+
+.room-say button:hover:not(:disabled),
+.room-say button:active:not(:disabled) {
+  transform: translateY(-50%) scale(1.08);
+}
+
+.room-say button:disabled {
+  background: transparent;
+  color: rgba(255, 243, 220, 0.25);
+  cursor: default;
+}
+
+.room-say button {
+  top: 25px;
+}
+
+.keys-line {
+  margin-top: 7px;
+  font-size: 0.7rem;
+  text-align: center;
+  color: rgba(255, 243, 220, 0.5);
+}
+
+.keys-line kbd { height: 1.5em; min-width: 0; margin: 0 1px; font-size: 0.6rem; opacity: 0.8; box-shadow: none; }
+.keys-line .busy { display: none; }
+.room-say input:focus ~ .keys-line .idle { display: none; }
+.room-say input:focus ~ .keys-line .busy { display: inline; }
+
+/* The newest line, shown beside the tab while the room is slid away. It rises, stays
+   four seconds and goes. */
+.room-peek {
+  position: absolute;
+  top: calc(50% + 46px);
+  right: calc(100% + 10px);
+  width: max-content;
+  max-width: 260px;
+  padding: 8px 14px;
+  border-radius: 18px 18px 6px 18px;
+  background: var(--cream);
+  color: var(--night);
+  font-size: 0.84rem;
+  line-height: 1.35;
+  opacity: 0;
+  animation: peek 4.5s ease forwards;
+  pointer-events: none;
+}
+
+.room-peek b {
+  margin-right: 6px;
+  font: 700 0.8rem var(--display);
+  filter: brightness(0.55) saturate(1.6);
+}
+
+@keyframes peek {
+  0% { opacity: 0; transform: translateY(8px); }
+  6%, 88% { opacity: 1; transform: none; }
+  100% { opacity: 0; }
+}
+
+@media (max-width: 760px) {
+  .room {
+    top: auto;
+    height: 58vh;
+    width: 100vw;
+    border-radius: 26px 26px 0 0;
+  }
+
+  .room.shut { transform: translateY(100%); }
+  .room-tab { top: -30px; left: 50%; width: 68px; min-height: 30px; padding: 0; border-radius: 14px 14px 0 0; transform: translateX(-50%); }
+  .room-tab:hover:not(:disabled), .room-tab:active:not(:disabled) { transform: translateX(-50%); }
+}
