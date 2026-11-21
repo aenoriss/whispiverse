@@ -10,7 +10,7 @@ const RADAR_RANGE = 70
 const MAP_SPAN = 112                              // world units from the centre to the map's edge
 const FULL = 90                                   // seconds at which a topic's gauge reads as full
 const LOW = 30                                    // below this a topic is running out
-const ROSE = '#ffa6b4', GOLD = '#ffc86b', CREAM = '#fff3dc'
+const ROSE = '#ffb08a', GOLD = '#ffc86b', CREAM = '#fff3dc'
 const DISPLAY = "'Grandstander', 'Nunito', sans-serif"
 
 // A picked image is shrunk in the browser before it is sent, so a topic's picture is a
@@ -58,19 +58,16 @@ function Stars({ energy, small }) {
 }
 
 // The count of sparks, drawn the way the comet itself wears them: a star with rings round
-// it, one spark a dot, three to a ring. A complete ring is one topic's worth and is lit.
+// it, each ring filling a third of the way per spark. A closed ring is one topic's worth.
 function Orbits({ score, cost }) {
   return (
     <svg className="orbits" viewBox="-40 -40 80 80" aria-hidden="true">
       {[0, 1, 2, 3].map((k) => {
-        const held = Math.max(0, Math.min(cost, score - k * cost)), r = 13 + k * 8
+        const held = Math.max(0, Math.min(cost, score - k * cost)), r = 14 + k * 7, round = 2 * Math.PI * r
         return (
-          <g key={k} transform={`rotate(${k * 40 - 20})`}>
-            <ellipse rx={r} ry={r * 0.42} className={held === cost ? 'ring full' : held ? 'ring some' : 'ring'} />
-            {Array.from({ length: held }, (_, j) => {
-              const a = (j / cost) * Math.PI * 2 + k
-              return <circle key={j} cx={Math.cos(a) * r} cy={Math.sin(a) * r * 0.42} r="2.8" className="dot" />
-            })}
+          <g key={k} transform="rotate(-90)">
+            <circle r={r} className="ring" />
+            {held > 0 && <circle r={r} className={held === cost ? 'ring full' : 'ring some'} strokeDasharray={`${round * held / cost} ${round}`} />}
           </g>
         )
       })}
@@ -79,24 +76,22 @@ function Orbits({ score, cost }) {
   )
 }
 
-// The radar: what is around you, with ahead at the top. Sparks are gold stars, comets are
-// cream dots, and every topic is shown with its zone at true size, so you can see the edge
-// of where you can talk before you reach it.
+// The radar: who and what is around you, with ahead at the top. Comets are cream dots, and
+// every topic is shown with its zone at true size, so you can see the edge of where you can
+// talk before you reach it. Sparks are left off: they are everywhere and come to you.
 function drawRadar(c, data) {
   const g = c.getContext('2d'), R = c.width / 2
   g.clearRect(0, 0, c.width, c.height)
   g.save()
   g.beginPath(); g.arc(R, R, R - 2, 0, Math.PI * 2); g.clip()
   data.portals.forEach(([x, y]) => {
-    g.fillStyle = 'rgba(255,166,180,0.2)'
+    g.fillStyle = 'rgba(255,176,138,0.2)'
     g.beginPath(); g.arc(R + x * R, R + y * R, data.zone * R, 0, Math.PI * 2); g.fill()
     g.strokeStyle = ROSE; g.lineWidth = 2.5; g.setLineDash([3, 7]); g.lineCap = 'round'
     g.stroke(); g.setLineDash([])
     g.fillStyle = ROSE
     g.beginPath(); g.arc(R + x * R, R + y * R, 7, 0, Math.PI * 2); g.fill()
   })
-  g.fillStyle = GOLD
-  data.sparks.forEach(([x, y, up]) => sparkle(g, R + x * R, R + y * R, Math.max(5, Math.min(11, 7.5 + up * 0.1))))
   g.fillStyle = CREAM
   data.comets.forEach(([x, y]) => { g.beginPath(); g.arc(R + x * R, R + y * R, 4.5, 0, Math.PI * 2); g.fill() })
   g.restore()
@@ -110,75 +105,15 @@ function drawRadar(c, data) {
   sparkle(g, R, R, 15)
 }
 
-// The map: the whole sky from above, north up. Every open topic with its name, its zone at
-// true size, how full it is and the comets gathered in it, and where you are and are looking.
-function drawMap(c, snap, waypoint) {
-  const g = c.getContext('2d'), R = c.width / 2
-  const X = (x) => R + (x / MAP_SPAN) * R, Y = (z) => R + (z / MAP_SPAN) * R
-  const zone = (snap.zone / MAP_SPAN) * R
-  g.clearRect(0, 0, c.width, c.height)
-  g.fillStyle = 'rgba(255,200,107,0.75)'
-  snap.sparks.forEach(([x, z]) => sparkle(g, X(x), Y(z), 5))
-
-  const me = snap.comets.find((p) => p.me)
-  const target = snap.topics.find((t) => t.id === waypoint)
-  if (me && target) {
-    g.strokeStyle = CREAM; g.lineWidth = 3; g.setLineDash([2, 12]); g.lineCap = 'round'
-    g.beginPath(); g.moveTo(X(me.x), Y(me.z)); g.lineTo(X(target.x), Y(target.z)); g.stroke()
-    g.setLineDash([])
-  }
-
-  g.textAlign = 'center'
-  const taken = []                                // label boxes already drawn, so names do not land on each other
-  const free = (box) => !taken.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])
-  snap.topics.forEach((t) => {
-    const x = X(t.x), y = Y(t.z), full = Math.min(1, t.energy / FULL)
-    // The zone: a warm pool, with a dotted edge.
-    const pool = g.createRadialGradient(x, y, 0, x, y, zone)
-    pool.addColorStop(0, 'rgba(255,166,180,0.42)'); pool.addColorStop(1, 'rgba(255,166,180,0.1)')
-    g.fillStyle = pool
-    g.beginPath(); g.arc(x, y, zone, 0, Math.PI * 2); g.fill()
-    g.strokeStyle = 'rgba(255,166,180,0.8)'; g.lineWidth = 2.5; g.setLineDash([2, 9]); g.lineCap = 'round'
-    g.stroke(); g.setLineDash([])
-    // The portal: a cream heart inside a ring that empties as the topic runs down.
-    g.strokeStyle = t.energy < LOW ? '#ff8052' : CREAM; g.lineWidth = 6
-    g.beginPath(); g.arc(x, y, 17, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * full); g.stroke()
-    g.fillStyle = CREAM
-    g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.fill()
-    g.font = `600 25px ${DISPLAY}`
-    const text = t.name.length > 30 ? t.name.slice(0, 29) + '…' : t.name
-    const w = g.measureText(text).width
-    const lx = Math.max(w / 2 + 8, Math.min(c.width - w / 2 - 8, x))
-    const ly = [y - zone - 14, y + zone + 32, y - zone - 46].find((at) => free([lx - w / 2, at - 24, lx + w / 2, at + 6])) || y - zone - 14
-    taken.push([lx - w / 2 - 6, ly - 26, lx + w / 2 + 6, ly + 8])
-    g.fillStyle = CREAM
-    g.fillText(text, lx, ly)
-  })
-
-  // Comets: a dot each. Names only for people, since simulated ones are just traffic.
-  snap.comets.forEach((p) => {
-    if (p.me) return
-    g.fillStyle = p.bot ? 'rgba(255,243,220,0.8)' : '#ffffff'
-    g.beginPath(); g.arc(X(p.x), Y(p.z), p.bot ? 4.5 : 6.5, 0, Math.PI * 2); g.fill()
-    if (p.bot) return
-    g.font = `600 19px ${DISPLAY}`
-    g.fillText(p.name, X(p.x), Y(p.z) + 26)
-  })
-
-  if (me) {
-    g.save()
-    g.translate(X(me.x), Y(me.z)); g.rotate(snap.heading)
-    g.fillStyle = GOLD
-    g.beginPath(); g.moveTo(0, -30); g.lineTo(7, -12); g.lineTo(-7, -12); g.closePath(); g.fill()     // the way you are looking
-    sparkle(g, 0, 0, 17)
-    g.restore()
-  }
-}
+// The map is the sky itself seen from far off, turning slowly, with each topic's name pinned
+// above its zone and a list of them at the side.
+// The world draws it by pulling the camera back; this file only lays the names over it.
 
 export default function App() {
   const canvas = useRef(null)
   const radar = useRef(null)
-  const mapCanvas = useRef(null)
+  const pins = useRef(new Map())                 // topic id -> the element holding its name on the map
+  const youPin = useRef(null)
   const whisperInput = useRef(null)
   const world = useRef(null)
   const voice = useRef(null)
@@ -267,19 +202,40 @@ export default function App() {
     return () => { stop = true }
   }, [stage])
 
-  // The map redraws five times a second while it is open.
+  // While the map is open the list is refreshed once a second, and every frame the names
+  // are moved to where their topics are on screen. That is a transform per name, nothing more.
   useEffect(() => {
+    if (stage !== 'world') return
+    world.current.setMapMode(mapOpen)
     if (!mapOpen) return
-    const draw = () => {
-      const snap = world.current.snapshot()
-      if (!snap) return
-      setTopics(snap.topics.slice().sort((a, b) => a.away - b.away))
-      if (mapCanvas.current) drawMap(mapCanvas.current, snap, world.current.waypoint)
+    const list = () => { const snap = world.current.snapshot(); if (snap) setTopics(snap.topics.slice().sort((a, b) => a.away - b.away)) }
+    list()
+    const timer = setInterval(list, 1000)
+    let stop = false
+    const place = () => {
+      if (stop) return
+      requestAnimationFrame(place)
+      const put = (el, at) => { if (el) { el.style.opacity = at ? 1 : 0; if (at) el.style.transform = `translate(${at[0]}px, ${at[1]}px) translate(-50%, -100%)` } }
+      // Names that would land on each other are stacked: the lower one stays on its topic,
+      // the other is lifted clear of it.
+      const placed = []
+      const all = [...pins.current].map(([id, el]) => ({ el, at: world.current.screenOf(id), w: el.offsetWidth, h: el.offsetHeight }))
+      all.filter((p) => p.at).sort((a, b) => b.at[1] - a.at[1]).forEach((p) => {
+        let y = p.at[1]
+        for (let pass = 0; pass < 6; pass++) {
+          const hit = placed.find((q) => Math.abs(q.x - p.at[0]) < (q.w + p.w) / 2 + 6 && y > q.y - q.h - 4 && y - p.h < q.y + 4)
+          if (!hit) break
+          y = hit.y - hit.h - 5
+        }
+        placed.push({ x: p.at[0], y, w: p.w, h: p.h })
+        put(p.el, [p.at[0], y])
+      })
+      all.filter((p) => !p.at).forEach((p) => put(p.el, null))
+      put(youPin.current, world.current.screenOfMe())
     }
-    draw()
-    const timer = setInterval(draw, 200)
-    return () => clearInterval(timer)
-  }, [mapOpen])
+    requestAnimationFrame(place)
+    return () => { stop = true; clearInterval(timer) }
+  }, [mapOpen, stage])
 
   useEffect(() => { if (draft === '' && whisperInput.current) whisperInput.current.focus() }, [draft === null])
 
@@ -430,7 +386,14 @@ export default function App() {
 
           {mapOpen && (
             <section className="map">
-              <canvas ref={mapCanvas} width="900" height="900" />
+              {topics.map((t) => (
+                <button key={t.id} className={'pin' + (way && way.id === t.id ? ' going' : '')} onClick={() => headTo(t)}
+                  ref={(el) => { if (el) pins.current.set(t.id, el); else pins.current.delete(t.id) }}>
+                  <b>{t.name}</b>
+                  <span>{t.here === 0 ? 'nobody there' : `${t.here} talking`}</span>
+                </button>
+              ))}
+              <p className="pin you" ref={youPin}>you</p>
               <div className="topics">
                 <p className="soft">{topics.length === 0 ? 'no topics open' : topics.length === 1 ? '1 topic open' : `${topics.length} topics open`}</p>
                 <h2>Where the talk is</h2>
@@ -451,9 +414,11 @@ export default function App() {
             </section>
           )}
 
-          <div className="radar">
-            <canvas ref={radar} width="340" height="340" />
-          </div>
+          {!mapOpen && (
+            <div className="radar">
+              <canvas ref={radar} width="340" height="340" />
+            </div>
+          )}
 
           <div className="heard">
             {lines.map((l) => <p key={l.key} className={l.mine ? 'mine' : ''}><b>{l.name}</b>{l.text}</p>)}

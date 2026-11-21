@@ -11,9 +11,9 @@ const { Server } = require('socket.io');
 
 const PORT = Number(process.env.PORT || 4100);
 const WORLD = 85;            // sparks and topics live within this distance of the centre
-const SPARKS = 90;
-const EAT_RADIUS = 2.4;      // a comet this close to a spark collects it
-const MAGNET = 13;           // a spark this close to a comet is pulled toward it
+const SPARKS = 130;
+const EAT_RADIUS = 3.2;      // a comet this close to a spark collects it
+const MAGNET = 24;           // a spark this close to a comet is pulled toward it
 const PORTAL_COST = 3;       // sparks it takes to open a topic
 const PORTAL_ENERGY = 75;    // seconds a new topic lives without being fed
 const FEED_GAIN = 20;        // seconds one spark adds
@@ -30,11 +30,8 @@ const sparks = [];           // { p: [x, y, z], to: [x, y, z], speed }
 let nextPortal = 1;
 
 const rand = (span) => (Math.random() - 0.5) * 2 * span;
-const somewhere = () => [rand(WORLD), rand(WORLD * 0.2), rand(WORLD)];
+const somewhere = () => [rand(WORLD), rand(WORLD * 0.45), rand(WORLD)];
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-// Distance seen from above. Topics are kept apart by this one, so their zones do not
-// overlap on the map either.
-const flat = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const clean = (text, max) => String(text || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
 
 for (let i = 0; i < SPARKS; i++) sparks.push({ p: somewhere(), to: somewhere(), speed: 1.5 + Math.random() * 2.5 });
@@ -114,7 +111,7 @@ io.on('connection', (socket) => {
     const answer = typeof reply === 'function' ? reply : () => {};
     if (!me) return answer({ error: 'Not in the world.' });
     if (me.score < PORTAL_COST) return answer({ error: `A topic costs ${PORTAL_COST} sparks.` });
-    if (portals.some((p) => flat(p.p, me.p) < PORTAL_SPACING)) return answer({ error: 'Too close to another topic. Fly further out.' });
+    if (portals.some((p) => dist(p.p, me.p) < PORTAL_SPACING)) return answer({ error: 'Too close to another topic. Fly further out.' });
     const name = clean(data && data.name, 60);
     if (!name) return answer({ error: 'A topic needs a name.' });
     const image = data && typeof data.image === 'string' && data.image.startsWith('data:image/') && data.image.length < IMAGE_LIMIT * 1.4 ? data.image : '';
@@ -195,7 +192,7 @@ function steerBots(dt) {
     if (portals.length && !bot.visit && Math.random() < 0.012) bot.visit = portals[Math.floor(Math.random() * portals.length)];
     if (bot.visit && !portals.includes(bot.visit)) bot.visit = null;
     // Open a topic now and then, when it can afford one and there is room.
-    if (me.score >= PORTAL_COST && portals.length < 7 && Math.random() < 0.01 && !portals.some((p) => flat(p.p, me.p) < PORTAL_SPACING)) {
+    if (me.score >= PORTAL_COST && portals.length < 7 && Math.random() < 0.01 && !portals.some((p) => dist(p.p, me.p) < PORTAL_SPACING)) {
       const unused = TOPICS.filter((t) => !portals.some((p) => p.name === t[0]));
       if (unused.length) {
         const topic = unused[Math.floor(Math.random() * unused.length)];
@@ -252,7 +249,7 @@ setInterval(() => {
     for (const player of list) { const away = dist(spark.p, player.p); if (away < pullD) { pullD = away; pull = player; } }
     const d = dist(spark.p, spark.to);
     if (pull) {
-      const speed = 5 + (1 - pullD / MAGNET) * 22;
+      const speed = 9 + (1 - pullD / MAGNET) * 30;      // faster than a boosting comet once it is close
       for (let k = 0; k < 3; k++) spark.p[k] += (pull.p[k] - spark.p[k]) / (pullD || 1) * Math.min(pullD, speed * STEP);
     } else if (d < 0.5) spark.to = somewhere();
     else for (let k = 0; k < 3; k++) spark.p[k] += (spark.to[k] - spark.p[k]) / d * spark.speed * STEP;
@@ -278,7 +275,8 @@ setInterval(() => {
 // them close to where a new comet arrives.
 if (BOTS > 0) {
   const names = bots.map((b) => b.me.name);
-  [[-10, 2, -30], [46, 6, -48], [-58, -6, 14], [18, 9, 58]].forEach((at, i) => {
+  // Spread through the whole volume, high and low as well as near and far.
+  [[-14, 12, -32], [54, -24, -46], [-62, 28, 20], [24, -30, 60]].forEach((at, i) => {
     const made = plantPortal(names[i % names.length], at, TOPICS[i][0], TOPICS[i][1]);
     made.lines = TOPICS[i][2];
     made.energy = 120 - i * 20;

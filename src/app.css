@@ -5,7 +5,7 @@
   --cream: #fff3dc;
   --cream-soft: rgba(255, 243, 220, 0.72);
   --gold: #ffc86b;             /* sparks, and what sparks buy */
-  --rose: #ffa6b4;             /* topics: the portal, its zone, its marks on the radar and map */
+  --rose: #ffb08a;            /* topics: the portal, its zone, its marks on the radar and map */
   --ember: #ff8052;            /* a topic that is running out */
   --night: #1a1024;
   --cloud: rgba(38, 22, 48, 0.84);
@@ -224,7 +224,7 @@ button.tiny {
 .intro h1 {
   font-size: clamp(3.2rem, 9vw, 6rem);
   line-height: 0.9;
-  text-shadow: 0 0 60px rgba(255, 166, 180, 0.5);
+  text-shadow: 0 0 60px rgba(255, 176, 138, 0.5);
 }
 
 .lede {
@@ -299,7 +299,7 @@ button.tiny {
 .where.in {
   background: var(--rose);
   color: var(--night);
-  box-shadow: 0 0 46px rgba(255, 166, 180, 0.6);
+  box-shadow: 0 0 46px rgba(255, 176, 138, 0.6);
 }
 
 .where.in span {
@@ -371,9 +371,8 @@ button.tiny {
 
 .orbits .core { fill: var(--cream); }
 .orbits .ring { fill: none; stroke: rgba(255, 243, 220, 0.2); stroke-width: 0.9; }
-.orbits .ring.some { stroke: rgba(255, 200, 107, 0.5); }
-.orbits .ring.full { stroke: var(--gold); stroke-width: 1.5; }
-.orbits .dot { fill: var(--gold); }
+.orbits .ring.some { stroke: var(--gold); stroke-width: 2.4; stroke-linecap: round; opacity: 0.75; }
+.orbits .ring.full { stroke: var(--gold); stroke-width: 2.8; }
 
 @keyframes gain {
   0% { transform: scale(1.4) rotate(-12deg); }
@@ -395,7 +394,7 @@ button.tiny {
   padding: 22px 24px;
   border-radius: 34px 40px 36px 44px / 40px 34px 44px 36px;
   background: var(--cloud);
-  box-shadow: 0 0 70px rgba(255, 166, 180, 0.18);
+  box-shadow: 0 0 70px rgba(255, 176, 138, 0.18);
   scrollbar-width: none;
   animation: float-in 0.4s cubic-bezier(0.3, 1.4, 0.6, 1);
 }
@@ -501,41 +500,81 @@ button.tiny {
 
 /* The map */
 
+/* The sky itself is the map; this layer only holds the names pinned over it and the list. */
+
 .map {
   position: fixed;
   inset: 0;
-  z-index: 8;
-  display: grid;
-  grid-template-columns: auto minmax(260px, 340px);
-  gap: clamp(20px, 4vw, 56px);
-  align-items: center;
-  justify-content: center;
-  padding: 80px clamp(16px, 4vw, 60px) 30px;
-  background: radial-gradient(circle at 38% 50%, rgba(58, 32, 70, 0.95), rgba(20, 12, 28, 0.97) 70%);
-  animation: fade 0.2s ease;
+  z-index: 4;
+  pointer-events: none;
+  animation: fade 0.5s ease;
 }
 
 @keyframes fade {
   from { opacity: 0; }
 }
 
-.map canvas {
-  width: min(82vh, 54vw);
-  height: auto;
-  aspect-ratio: 1;
+.pin {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  padding: 7px 16px 8px;
+  border-radius: 20px;
+  background: var(--cloud);
+  color: var(--cream);
+  white-space: nowrap;
+  pointer-events: auto;
+  will-change: transform;
+  transition: background 0.15s ease;
+}
+
+button.pin:hover:not(:disabled),
+.pin.going {
+  background: var(--rose);
+  color: var(--night);
+  transform: none;
+}
+
+.pin b {
+  font: 700 1rem var(--display);
+}
+
+.pin span {
+  font-size: 0.74rem;
+  opacity: 0.8;
+}
+
+.pin.you {
+  padding: 3px 12px;
+  background: var(--gold);
+  color: var(--night);
+  font: 700 0.85rem var(--display);
+  pointer-events: none;
 }
 
 .topics {
+  position: absolute;
+  top: 96px;
+  right: 22px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
   align-content: start;
-  max-height: 82vh;
+  width: min(310px, calc(100vw - 44px));
+  max-height: calc(100vh - 130px);
+  box-sizing: border-box;
+  padding: 20px 20px 18px;
+  border-radius: 34px 40px 36px 44px / 40px 34px 44px 36px;
+  background: var(--cloud);
   overflow-y: auto;
   scrollbar-width: none;
+  pointer-events: auto;
 }
 
 .topics h2 {
-  font-size: 2.3rem;
+  font-size: 1.6rem;
   line-height: 1;
 }
 
@@ -607,7 +646,7 @@ button.topic > span:last-child {
   border-color: var(--rose);
   border-radius: 999px;
   background: var(--cloud);
-  box-shadow: 0 0 40px rgba(255, 166, 180, 0.35);
+  box-shadow: 0 0 40px rgba(255, 176, 138, 0.35);
 }
 
 /* The radar: a round window. */
