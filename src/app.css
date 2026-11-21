@@ -370,9 +370,7 @@ button.tiny {
 }
 
 .orbits .core { fill: var(--cream); }
-.orbits .ring { fill: none; stroke: rgba(255, 243, 220, 0.2); stroke-width: 0.9; }
-.orbits .ring.some { stroke: var(--gold); stroke-width: 2.4; stroke-linecap: round; opacity: 0.75; }
-.orbits .ring.full { stroke: var(--gold); stroke-width: 2.8; }
+.orbits .glow { fill: var(--gold); filter: blur(7px); transition: r 0.4s ease, opacity 0.4s ease; }
 
 @keyframes gain {
   0% { transform: scale(1.4) rotate(-12deg); }

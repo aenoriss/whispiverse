@@ -9,7 +9,6 @@ import { io } from 'socket.io-client'
 // says, flies the local comet, and sends where it is fifteen times a second.
 
 const SEND_EVERY = 1 / 15
-const ORBITS = 4                // rings of held sparks drawn round a comet, three sparks to a ring
 const PORTAL_SIZE = 1.9         // a portal is a landmark: several times the size of a comet
 const FULL = 90                 // seconds of time at which a topic's rim reads as full
 const TOPIC = 0xffb08a          // the colour of everything that is a topic: firelight
@@ -335,6 +334,28 @@ export class World {
     }
     window.addEventListener('keydown', this.onKey)
     window.addEventListener('keyup', this.onKey)
+
+    // On the map, dragging turns the far view round the sky and tilts it, and the wheel
+    // moves it in and out. Until the first drag it turns slowly by itself.
+    this.mapView = { yaw: 0, tilt: 0.72, far: 200, held: false, touched: false }
+    let last = null
+    this.onMapDrag = (e) => {
+      const v = this.mapView
+      if (!this.mapMode) { last = null; return }
+      if (e.type === 'pointerdown') { last = [e.clientX, e.clientY]; v.touched = true }
+      else if (e.type === 'pointermove' && last && e.buttons) {
+        v.yaw -= (e.clientX - last[0]) * 0.005
+        v.tilt = Math.max(0.08, Math.min(1.5, v.tilt + (e.clientY - last[1]) * 0.004))
+        last = [e.clientX, e.clientY]
+      } else if (e.type === 'pointerup') last = null
+    }
+    this.onMapWheel = (e) => {
+      if (!this.mapMode) return
+      e.preventDefault()
+      this.mapView.far = Math.max(70, Math.min(330, this.mapView.far * (1 + Math.sign(e.deltaY) * 0.1)))
+    }
+    for (const type of ['pointerdown', 'pointermove', 'pointerup']) this.canvas.addEventListener(type, this.onMapDrag)
+    this.canvas.addEventListener('wheel', this.onMapWheel, { passive: false })
   }
 
   // ---------------------------------------------------------------- network
@@ -438,32 +459,17 @@ export class World {
     if (!isMe) { tag = label(p.bot ? p.name + ' · sim' : p.name, 38); tag.scale.set(4, 0.75, 1); tag.position.y = 1.25; group.add(tag) }
     group.position.fromArray(p.p)
     this.scene.add(group)
-    this.players.set(p.id, { group, head, coma, halo, tail, tag, tailAt: 0, target: new THREE.Vector3().fromArray(p.p), name: p.name, hue: p.hue, score: p.score || 0, shown: -1, glow: 3.2, isMe, bot: !!p.bot })
+    this.players.set(p.id, { group, colour, head, coma, halo, tail, tag, tailAt: 0, target: new THREE.Vector3().fromArray(p.p), name: p.name, hue: p.hue, score: p.score || 0, shown: -1, glow: 3.2, isMe, bot: !!p.bot })
     if (isMe) { this.controls.target.copy(group.position); this.camera.position.copy(group.position).add(new THREE.Vector3(0, 2, 7)) }
   }
 
-  // The sparks a comet holds show on it, three to a ring: one ring is what a topic costs.
-  // So a comet's wealth can be read off it, and a rich one is ringed and bright.
+  // The sparks a comet holds show as how bright it is.
   showSparks(p) {
-    // Nothing floats: each spark taken in charges the halo. The halo is a set of thin rings
-    // facing you, and each ring fills a third of the way round per spark, like the ring that
-    // times a topic. A ring that has closed is a topic's worth.
-    if (!p.charge) { p.charge = new THREE.Group(); p.group.add(p.charge); p.rings = [] }
-    const held = Math.min(p.score, ORBITS * 3)
-    for (let k = 0; k < ORBITS; k++) {
-      const count = Math.max(0, Math.min(3, held - k * 3))
-      let ring = p.rings[k]
-      if (!ring && count === 0) continue
-      if (!ring) {
-        ring = p.rings[k] = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: SPARK, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }))
-        p.charge.add(ring)
-      }
-      const r = 0.95 + k * 0.24
-      ring.visible = count > 0
-      ring.geometry.dispose()
-      ring.geometry = new THREE.RingGeometry(r - 0.035, r + 0.035, 64, 1, Math.PI / 2, -Math.PI * 2 * (count / 3))
-      ring.material.opacity = count === 3 ? 0.95 : 0.6
-    }
+    // Nothing is added round the comet: each spark taken in makes its own light stronger.
+    // The glow widens and warms toward gold, and the star's rays lengthen, up to 12 sparks.
+    const charge = Math.min(1, p.score / 12)
+    p.halo.material.color.copy(p.colour).lerp(new THREE.Color(SPARK), charge * 0.6)
+    p.coma.material.opacity = 0.6 + charge * 0.4
     // Your own count is written under your comet, where you are already looking.
     if (p.isMe) {
       if (p.count) p.group.remove(p.count)
@@ -474,10 +480,10 @@ export class World {
       p.group.add(p.count)
     }
     p.shown = p.score
-    p.halo.material.opacity = 0.24 + Math.min(0.4, p.score * 0.03)
-    p.glow = 3.2 + Math.min(4, p.score * 0.3)
+    p.halo.material.opacity = 0.24 + charge * 0.36
+    p.glow = 3.2 + charge * 4.5
     p.halo.scale.setScalar(p.glow)
-    p.head.scale.setScalar(1.9 + Math.min(1.3, p.score * 0.09))
+    p.head.scale.setScalar(1.9 + charge * 1.6)
   }
 
   removePlayer(id) {
@@ -819,11 +825,12 @@ export class World {
     }
     // The map: ease the camera between its place behind the comet and the far view.
     this.mapBlend = (this.mapBlend || 0) + ((this.mapMode ? 1 : 0) - (this.mapBlend || 0)) * Math.min(1, dt * 4.5)
-    if (mine && (this.mapMode || this.mapBlend > 0.003)) {
-      this.mapSpin = (this.mapSpin || 0) + dt * 0.045
+    if (mine && (this.mapMode || this.mapBlend > 0)) {
+      const v = this.mapView
+      if (!v.touched) v.yaw += dt * 0.045
       const k = this.mapBlend * this.mapBlend * (3 - 2 * this.mapBlend)
       const follow = mine.group.position.clone().add(this.mapOffset)
-      const far = new THREE.Vector3(Math.sin(this.mapSpin) * 150, 130, Math.cos(this.mapSpin) * 150)
+      const far = new THREE.Vector3(Math.sin(v.yaw) * Math.cos(v.tilt), Math.sin(v.tilt), Math.cos(v.yaw) * Math.cos(v.tilt)).multiplyScalar(v.far)
       this.camera.position.lerpVectors(follow, far, k)
       this.camera.lookAt(mine.group.position.clone().multiplyScalar(1 - k))
       this.veil.position.copy(this.camera.position)
@@ -861,7 +868,6 @@ export class World {
       p.head.material.rotation = now * 0.25 + i
       p.coma.scale.setScalar(1.2 + Math.sin(now * 3 + i * 2.1) * 0.12)
       if (p.shown !== p.score) this.showSparks(p)
-      if (p.charge) p.charge.quaternion.copy(this.camera.quaternion)
       if (p.bubble) {
         p.bubbleFor -= dt
         p.bubble.material.opacity = Math.min(1, p.bubbleFor)
@@ -880,7 +886,7 @@ export class World {
       s.position.lerp(s.userData.target, Math.min(1, dt * 8))
       // Each spark twinkles on its own beat and turns slowly; one being pulled in brightens on the way.
       let size = 1.5 + Math.sin(now * 2.3 + n * 1.7) * 0.35 + Math.sin(now * 7.1 + n) * 0.1
-      if (mine) { const away = s.position.distanceTo(mine.group.position); if (away < 24) size *= 1 + (1 - away / 24) * 0.9 }
+      if (mine) { const away = s.position.distanceTo(mine.group.position); if (away < 18) size *= 1 + (1 - away / 18) * 0.9 }
       s.scale.setScalar(size)
       s.material.rotation = now * 0.3 + n
     })

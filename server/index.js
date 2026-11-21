@@ -13,7 +13,7 @@ const PORT = Number(process.env.PORT || 4100);
 const WORLD = 85;            // sparks and topics live within this distance of the centre
 const SPARKS = 130;
 const EAT_RADIUS = 3.2;      // a comet this close to a spark collects it
-const MAGNET = 24;           // a spark this close to a comet is pulled toward it
+const MAGNET = 18;          // a spark this close to a comet is pulled toward it
 const PORTAL_COST = 3;       // sparks it takes to open a topic
 const PORTAL_ENERGY = 75;    // seconds a new topic lives without being fed
 const FEED_GAIN = 20;        // seconds one spark adds
@@ -249,7 +249,7 @@ setInterval(() => {
     for (const player of list) { const away = dist(spark.p, player.p); if (away < pullD) { pullD = away; pull = player; } }
     const d = dist(spark.p, spark.to);
     if (pull) {
-      const speed = 9 + (1 - pullD / MAGNET) * 30;      // faster than a boosting comet once it is close
+      const speed = 6 + (1 - pullD / MAGNET) * 22;      // a drift at the edge, quick once it is close
       for (let k = 0; k < 3; k++) spark.p[k] += (pull.p[k] - spark.p[k]) / (pullD || 1) * Math.min(pullD, speed * STEP);
     } else if (d < 0.5) spark.to = somewhere();
     else for (let k = 0; k < 3; k++) spark.p[k] += (spark.to[k] - spark.p[k]) / d * spark.speed * STEP;

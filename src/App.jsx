@@ -57,21 +57,13 @@ function Stars({ energy, small }) {
   )
 }
 
-// The count of sparks, drawn the way the comet itself wears them: a star with rings round
-// it, each ring filling a third of the way per spark. A closed ring is one topic's worth.
+// The count of sparks, drawn the way the comet itself shows them: a star that grows and
+// glows more the more it holds.
 function Orbits({ score, cost }) {
   return (
     <svg className="orbits" viewBox="-40 -40 80 80" aria-hidden="true">
-      {[0, 1, 2, 3].map((k) => {
-        const held = Math.max(0, Math.min(cost, score - k * cost)), r = 14 + k * 7, round = 2 * Math.PI * r
-        return (
-          <g key={k} transform="rotate(-90)">
-            <circle r={r} className="ring" />
-            {held > 0 && <circle r={r} className={held === cost ? 'ring full' : 'ring some'} strokeDasharray={`${round * held / cost} ${round}`} />}
-          </g>
-        )
-      })}
-      <path d={STAR} className="core" transform={`scale(${0.75 + Math.min(0.5, score * 0.04)})`} />
+      <circle r={10 + Math.min(1, score / 12) * 24} className="glow" style={{ opacity: 0.25 + Math.min(1, score / 12) * 0.5 }} />
+      <path d={STAR} className="core" transform={`scale(${1.3 + Math.min(1, score / 12) * 1.5})`} />
     </svg>
   )
 }
@@ -409,7 +401,7 @@ export default function App() {
                     </li>
                   ))}
                 </ul>
-                <p className="keys">Pick one and follow the stars to it.</p>
+                <p className="keys">Drag to look round the sky, scroll to move in and out. Pick a topic and follow the stars to it.</p>
               </div>
             </section>
           )}
