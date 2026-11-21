@@ -840,3 +840,17 @@ button.dash,
 .paneled .where {
   max-width: min(400px, calc(100vw - min(350px, 92vw) - 420px));
 }
+
+/* Shown on the way in when no server answers. */
+.offline {
+  max-width: 44ch;
+  padding: 14px 18px;
+  border-radius: 20px;
+  background: var(--cloud);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--cream-soft);
+}
+
+.offline a { color: var(--gold); }
+.offline code { font-size: 0.82rem; color: var(--cream); }
